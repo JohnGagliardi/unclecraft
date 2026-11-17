@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UncleCraft</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header class="hero">
+    <canvas id="sky" aria-hidden="true"></canvas>
+    <div class="hero-inner">
+      <div id="wordmark" class="wordmark"></div>
+      <div class="tagline">Grab a controller. Grab a seat. Uncle's server is waiting.</div>
+    </div>
+    <div class="top-buttons">
+      <button id="soundBtn" class="icon-btn" data-nav title="Sound on/off" aria-label="Sound on/off"></button>
+      <button id="settingsBtn" class="icon-btn" data-nav title="Server settings" aria-label="Server settings"></button>
+    </div>
+    <div id="testBanner" class="test-banner" hidden><span data-px="TEST MODE" data-px-scale="2"></span><span>Microsoft sign-in is off &middot; only the host's PC can play</span></div>
+  </header>
+
+  <main class="body">
+    <section class="panel players">
+      <div class="panel-head">
+        <span data-px="WHO'S PLAYING?" data-px-scale="3" data-px-shadow="#0b1226"></span>
+        <div class="mode-toggle" role="radiogroup" aria-label="Players on this PC">
+          <button data-mode="1" data-nav role="radio">1 PLAYER</button>
+          <button data-mode="2" data-nav role="radio">2 PLAYERS &middot; SPLIT-SCREEN</button>
+        </div>
+      </div>
+
+      <div id="splitPicker" class="split" hidden>
+        <button class="slot" data-slot="0" data-nav><span class="slot-label">LEFT SCREEN</span><span class="slot-body"></span></button>
+        <div class="split-plus" aria-hidden="true">+</div>
+        <button class="slot" data-slot="1" data-nav><span class="slot-label">RIGHT SCREEN</span><span class="slot-body"></span></button>
+        <div class="split-go">
+          <button id="startSplit" class="btn mega" data-nav hidden></button>
+          <div id="splitHint" class="hint">Click a player for each screen. Click a filled screen to empty it.</div>
+        </div>
+      </div>
+
+      <div id="cards" class="cards" role="list"></div>
+    </section>
+
+    <aside class="panel server" aria-live="polite">
+      <div class="panel-head">
+        <span data-px="SERVER" data-px-scale="3" data-px-shadow="#0b1226"></span>
+        <span id="srvLight" class="light" title="Server status"></span>
+      </div>
+      <div id="srvState" class="srv-state">Checking&hellip;</div>
+      <div id="modeChip" class="mode-chip" hidden title="Before Mojang approval: home network only, every start gets a one-time join pass.">INTERIM MODE &middot; HOME NETWORK</div>
+      <div class="srv-section">
+        <div class="srv-label">Accounts free</div>
+        <div id="accMeter" class="meter"></div>
+        <div id="accText" class="srv-sub"></div>
+      </div>
+      <div class="srv-section">
+        <div class="srv-label">Playing now</div>
+        <ul id="playing" class="playing"></ul>
+      </div>
+      <div id="srvAddr" class="srv-addr"></div>
+    </aside>
+  </main>
+  <div id="toast" class="toast" role="status"></div>
+</div>
+
+<!-- new player login -->
+<div id="loginModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+  <form id="loginForm" class="modal-card">
+    <div id="loginTitle" data-px="NEW PLAYER" data-px-scale="3" data-px-shadow="#0b1226"></div>
+    <div class="mode-toggle login-tabs" role="tablist">
+      <button type="button" data-tab="password" data-nav role="tab">NAME + PASSWORD</button>
+      <button type="button" data-tab="invite" data-nav role="tab">I HAVE AN INVITE CODE</button>
+    </div>
+    <p class="muted" id="loginHint">Log in with the name and password the host gave you.</p>
+    <div id="pwFields" class="fields">
+      <label>Name<input id="loginName" autocomplete="username" data-nav maxlength="40"></label>
+      <label>Password<input id="loginPass" type="password" autocomplete="current-password" data-nav></label>
+      <label class="check"><input id="loginRemember" type="checkbox" data-nav checked> Remember me on this PC</label>
+    </div>
+    <div id="inviteFields" class="fields" hidden>
+      <label>Invite code<input id="inviteCode" class="invite-input" data-nav autocomplete="off" spellcheck="false" maxlength="24" placeholder="XXXX-XXXX-XXXX-XXXX"></label>
+      <div id="inviteCheck" class="small muted">The host makes one with <code>node broker.js invite &lt;your name&gt;</code>. It works once and remembers this PC.</div>
+      <label>Choose your own password <span class="small">(optional, 10+ characters)</span><input id="invitePass" type="password" autocomplete="new-password" data-nav></label>
+      <div id="invitePassCheck" class="small muted">Lets you log in on another computer later. Only you will know it; the host never sees it.</div>
+    </div>
+    <div class="row">
+      <button type="button" class="btn ghost" data-close data-nav>Cancel</button>
+      <button type="submit" id="loginGo" class="btn go" data-nav>LOG IN &amp; PLAY</button>
+    </div>
+  </form>
+</div>
+
+<!-- confirm -->
+<div id="confirmModal" class="modal" role="dialog" aria-modal="true">
+  <div class="modal-card">
+    <div id="confirmTitle" class="modal-title"></div>
+    <p id="confirmText" class="muted"></p>
+    <div class="row">
+      <button type="button" class="btn ghost" id="confirmNo" data-nav>Keep</button>
+      <button type="button" class="btn danger" id="confirmYes" data-nav>Forget</button>
+    </div>
+  </div>
+</div>
+
+<!-- first-run setup wizard -->
+<div id="setup" class="overlay" role="dialog" aria-modal="true">
+  <canvas class="overlay-sky" aria-hidden="true"></canvas>
+  <div class="wizard">
+    <div class="steps" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <section class="step" data-step="0">
+      <div data-px="WELCOME!" data-px-scale="5" data-px-shadow="#0b1226"></div>
+      <p>UncleCraft gets you onto Uncle's Minecraft server in one click. No Minecraft account needed: the host lends you one for the session.</p>
+      <p class="muted">First, two quick things from the host. Ask them; they're on the host's screen.</p>
+      <div class="row end"><button class="btn go" data-next data-nav>LET'S GO</button></div>
+    </section>
+    <section class="step" data-step="1">
+      <div data-px="1. SERVER ADDRESS" data-px-scale="4" data-px-shadow="#0b1226"></div>
+      <p>Where the host's server is. Ask the host which one to use.</p>
+      <label>Address<input id="wzServer" placeholder="192.168.1.20  or  uncle.example.org" data-nav autocomplete="off" spellcheck="false"></label>
+      <p class="muted small">At the host's house: their PC's home IP (like <code>192.168.1.20</code>). From anywhere else: the host's internet address or name. On the host's own PC: <code>127.0.0.1</code>. Add <code>:port</code> only if the host says so.</p>
+      <div class="row"><button class="btn ghost" data-back data-nav>Back</button><button class="btn go" data-next data-nav>NEXT</button></div>
+    </section>
+    <section class="step" data-step="2">
+      <div data-px="2. SECURITY CODE" data-px-scale="4" data-px-shadow="#0b1226"></div>
+      <p>The server's fingerprint: 32 pairs like <code>12:34:56:...</code>. It makes sure you're talking to the real host.</p>
+      <label>Fingerprint<textarea id="wzFingerprint" rows="3" data-nav spellcheck="false" placeholder="12:34:56:78:..."></textarea></label>
+      <div id="fpCheck" class="small muted">The host gets it with <code>node broker.js fingerprint</code>.</div>
+      <div class="row"><button class="btn ghost" data-back data-nav>Back</button><button class="btn go" data-next id="wzTest" data-nav>CONNECT</button></div>
+    </section>
+    <section class="step" data-step="3">
+      <div id="wzResultTitle"></div>
+      <p id="wzResultText"></p>
+      <div class="row"><button class="btn ghost" data-back data-nav id="wzRetry">Back</button><button class="btn go" id="wzDone" data-nav>LET'S PLAY</button></div>
+    </section>
+  </div>
+</div>
+
+<!-- launch / download -->
+<div id="launch" class="overlay" role="dialog" aria-modal="true" aria-live="polite">
+  <canvas class="overlay-sky" aria-hidden="true"></canvas>
+  <div class="launch-card">
+    <div id="launchTitle" class="launch-title"></div>
+    <div id="launchSub" class="launch-sub"></div>
+    <canvas id="hopper" class="hopper" aria-hidden="true"></canvas>
+    <ol id="stageList" class="stages"></ol>
+    <div class="bar"><div id="barFill" class="bar-fill"></div></div>
+    <div id="barText" class="bar-text"></div>
+    <div id="launchError" class="launch-error" hidden>
+      <div id="errTitle"></div>
+      <p id="errText"></p>
+      <p id="errHint" class="muted"></p>
+      <div class="row center">
+        <button class="btn ghost" id="errBack" data-nav>BACK</button>
+        <button class="btn go" id="errAction" data-nav hidden></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="pixel.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

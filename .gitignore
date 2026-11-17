@@ -1,0 +1,10 @@
+bin/
+obj/
+dist/
+dist-mac/
+shots/
+mac/out/
+mac/bin/
+mac/obj/
+*.user
+.vs/

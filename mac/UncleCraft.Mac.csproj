@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- macOS build of UncleCraft: Photino (WKWebView) window around the same UI and core as the Windows exe.
+       Build + package: app\mac\build-mac.ps1 -> app\dist-mac\UncleCraft-mac-<arch>.zip -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>UncleCraft</AssemblyName>
+    <RootNamespace>McShared</RootNamespace>
+    <Version>0.1.0</Version>
+    <RuntimeIdentifiers>osx-arm64;osx-x64</RuntimeIdentifiers>
+    <SelfContained>true</SelfContained>
+    <UseAppHost>true</UseAppHost>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <DebugType>none</DebugType>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- shared with the Windows build -->
+    <Compile Include="..\AppCore.cs;..\Broker.cs;..\Game.cs;..\Log.cs;..\Logins.cs;..\Platform.cs;..\Remembered.cs;..\Settings.cs" />
+    <EmbeddedResource Include="..\ui\*.html;..\ui\*.css;..\ui\*.js" LogicalName="ui/%(Filename)%(Extension)" />
+    <PackageReference Include="Photino.NET" Version="4.0.16" />
+  </ItemGroup>
+</Project>
