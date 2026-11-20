@@ -143,7 +143,7 @@ async function confirmForget(person) {
 /* ================= one click / split-screen slots ================= */
 function setMode(mode) {
   S.mode = mode; S.slots = [null, null]; cancelCountdown();
-  $$('.mode-toggle button').forEach((b) => b.setAttribute('aria-checked', String(Number(b.dataset.mode) === mode)));
+  $$('.mode-toggle button[data-mode]').forEach((b) => b.setAttribute('aria-checked', String(Number(b.dataset.mode) === mode)));
   $('#splitPicker').hidden = mode !== 2;
   renderSlots(); renderCards();
   call('setMode', { split: mode === 2 }).catch(() => {});
@@ -492,7 +492,8 @@ async function boot() {
   if (demo) document.body.classList.add('shot'); // offscreen previews: skip entry animations
   renderPixelLabels();
   setupHero();
-  $$('.mode-toggle button').forEach((b) => (b.onclick = () => { Sound.click(); setMode(Number(b.dataset.mode)); }));
+  // only the 1/2-player toggle: the login tabs share the .mode-toggle look but have their own handler
+  $$('.mode-toggle button[data-mode]').forEach((b) => (b.onclick = () => { Sound.click(); setMode(Number(b.dataset.mode)); }));
   $$('.slot').forEach((s) => (s.onclick = () => { const c = S.slots[Number(s.dataset.slot)]; if (c) choose(c); }));
   $$('[data-close]').forEach((b) => (b.onclick = () => { Sound.back(); closeModal(b.closest('.modal')); }));
   Nav.start(() => {
