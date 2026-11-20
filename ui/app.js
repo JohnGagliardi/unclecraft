@@ -84,7 +84,7 @@ const ICON_GEAR = ['...##...', '.#.##.#.', '..####..', '###..###', '###..###', '
 
 /* ================= hero ================= */
 function setupHero() {
-  $('#wordmark').append(pixelText('UNCLECRAFT', { scale: 8, outline: '#1b2a4a', shadow: '#16223f', gradient: ['#fff3a3', '#ffe066', '#ffd60a', '#ffb703', '#ff9f1c', '#fb8500', '#f77f00'] }));
+  $('#wordmark').append(pixelText('FAMILY SERVER', { scale: 7, outline: '#1b2a4a', shadow: '#16223f', gradient: ['#fff3a3', '#ffe066', '#ffd60a', '#ffb703', '#ff9f1c', '#fb8500', '#f77f00'] }));
   startLandscape($('#sky'), { px: 4, speed: 1 });
   $('#settingsBtn').append(iconSvg(ICON_GEAR, '#ffd60a'));
   $('#settingsBtn').onclick = () => { Sound.click(); openSetup(true); };

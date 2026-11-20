@@ -26,7 +26,7 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = AppName;
+        Text = Platform.Title;
         try { Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!); } catch { /* keep default */ }
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
@@ -215,7 +215,7 @@ public sealed class MainForm : Form
             broker = new BrokerClient(host, port, _fingerprint.Text);
             var game = await new GameInstaller(broker, Status, p => Progress(p.DoneFiles, p.TotalFiles)).Install(CancellationToken.None);
             _testMode = game.TestMode;
-            Text = _testMode ? $"{AppName} - TEST MODE: Microsoft sign-in is off" : AppName;
+            Text = _testMode ? $"{Platform.Title} - TEST MODE: Microsoft sign-in is off" : Platform.Title;
 
             var players = new List<PlayerChoice> { p1 };
             if (p2 != null) players.Add(p2);

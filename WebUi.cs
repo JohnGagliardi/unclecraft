@@ -24,7 +24,7 @@ public sealed class WebUiForm : Form, IGameWindows
     public WebUiForm()
     {
         _core = new AppCore(Post, this);
-        Text = Platform.AppName;
+        Text = Platform.Title;
         try { Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!); } catch { /* default */ }
         BackColor = Color.FromArgb(18, 26, 48);
         StartPosition = FormStartPosition.CenterScreen;

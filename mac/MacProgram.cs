@@ -21,7 +21,7 @@ public static class MacProgram
         {
             var core = new AppCore(Post, new MacWindows());
             _window = new PhotinoWindow()
-                .SetTitle(Platform.AppName)
+                .SetTitle(Platform.Title)
                 .SetUseOsDefaultSize(false)
                 .SetSize(1200, 800)
                 .SetMinSize(900, 640)

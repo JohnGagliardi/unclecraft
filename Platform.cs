@@ -6,6 +6,8 @@ namespace McShared;
 public static class Platform
 {
     public const string AppName = "UncleCraft";
+    /// <summary>What the window title bar and the launcher's heading show. The program, shortcuts and folders keep AppName.</summary>
+    public const string Title = "Family Server";
     public static bool IsMac => OperatingSystem.IsMacOS();
     public static bool IsWindows => OperatingSystem.IsWindows();
     public static bool IsArm64 => RuntimeInformation.OSArchitecture == Architecture.Arm64;
