@@ -51,6 +51,7 @@ const ERRORS = {
   java_failed:["GAME DIDN'T START", 'Java could not start Minecraft. Try again; if it keeps happening tell the host.'],
   download_failed: ["COULDN'T DOWNLOAD THE GAME FILES", 'Check the internet and try again.'],
   bad_manifest: ["HOST'S MOD LIST IS BROKEN", "One of the host's mods has a bad file name. Tell the host."],
+  update_quit_game: ['QUIT MINECRAFT FIRST', 'A new UncleCraft is ready. Quit Minecraft, then press Play again to update.'],
 };
 function friendly(err) {
   const [title, hint] = ERRORS[err?.code] || ['SOMETHING WENT WRONG', 'Try again. If it keeps happening, tell the host.'];
@@ -370,7 +371,21 @@ function setBar(frac, text) {
   if (frac == null) { f.classList.add('indeterminate'); } else { f.classList.remove('indeterminate'); f.style.width = `${Math.max(2, Math.min(100, frac * 100))}%`; }
   $('#barText').textContent = text;
 }
+/** Home-screen chip: "Couldn't check for updates", "Update failed, playing on vX", ... (text from the host; null hides it). */
+function renderUpdate(u) {
+  const chip = $('#updateNotice');
+  chip.textContent = u?.notice || '';
+  chip.hidden = !u?.notice;
+}
 function onProgress(p) {
+  if (p.stage === 'update') {
+    const now = performance.now();
+    if (speed.stage !== 'update') speed = { t: now, b: p.doneBytes, rate: 0, stage: 'update' };
+    const dt = (now - speed.t) / 1000;
+    if (dt > 0.5) { const r = (p.doneBytes - speed.b) / dt; speed.rate = speed.rate ? speed.rate * 0.7 + r * 0.3 : r; speed.t = now; speed.b = p.doneBytes; }
+    setBar(p.totalBytes ? p.doneBytes / p.totalBytes : null, `New UncleCraft: ${mb(p.doneBytes)} of ${mb(p.totalBytes)}${speed.rate > 0 ? `  ·  ${mb(speed.rate)}/s` : ''}`);
+    return;
+  }
   setStage(p.stage, p.done ? 'done' : 'active');
   if (p.done) { setBar(1, `${p.stage} ready`); return; }
   const now = performance.now();
@@ -471,7 +486,14 @@ onEvent((m) => {
   switch (m.event) {
     case 'progress': onProgress(m); break;
     case 'status': $('#launchSub').textContent = m.text; break;
+    case 'update':
+      renderUpdate(m);
+      // Play goes on with this version after a failed update: back to the normal launch title
+      if (S.busy && $('#launch').classList.contains('open')) { setTitle(S.players.length > 1 ? 'GET READY, BOTH!' : 'GETTING READY'); $('#launchCancel').hidden = false; }
+      break;
     case 'phase':
+      if (m.phase === 'update') { setTitle('UPDATING!'); $('#launchSub').textContent = `Updating UncleCraft… (v${m.version})`; setBar(null, 'Downloading the update…'); }
+      if (m.phase === 'update-apply') { $('#launchCancel').hidden = true; setBar(null, 'Starting the new version. This window closes in a moment…'); }
       if (m.phase === 'login') { setStage('login'); setBar(null, `Signing in ${m.person}…`); }
       if (m.phase === 'starting') { $('#launchCancel').hidden = true; setStage('start'); setTitle('STARTING!'); setBar(null, 'Starting Java…'); }
       if (m.phase === 'booting') { setStage('start'); setTitle('BOOTING MINECRAFT'); hopperAnim?.boot(); setBar(null, 'The game window will open in a moment…'); }
@@ -496,7 +518,8 @@ const Demo = {
     { person: 'Maya', lastPlayed: new Date(Date.now() - 4 * 86400e3).toISOString() },
   ],
   async call(type) {
-    if (type === 'init') return { configured: demo !== 'setup', settings: { server: '192.168.1.20', fingerprint: '12:34:56', soundOn: true, split: demo === 'split' }, saved: this.saved };
+    if (type === 'init') return { configured: demo !== 'setup', settings: { server: '192.168.1.20', fingerprint: '12:34:56', soundOn: true, split: demo === 'split' }, saved: this.saved,
+      update: { state: demo === 'update' ? 'failed' : 'none', current: '0.2.3', notice: demo === 'update' ? "Couldn't check for updates." : null } };
     if (type === 'status') return { ok: true, testMode: demo === 'test', mode: demo === 'test' ? 'test' : demo === 'interim' ? 'interim' : 'approved', accounts: { total: 6, free: 4 }, playing: [{ person: 'Ben', account: 'PoolAccount3', state: 'online', platform: 'java', world: 'Skyreach' }, { person: 'Mia', account: '', state: 'online', platform: 'console', world: 'Skyreach' }, { person: 'Uncle', account: 'PoolAccount1', state: 'reserved' }] };
     return {};
   },
@@ -519,6 +542,7 @@ async function boot() {
   });
   const r = await call('init');
   S.settings = r.settings; S.saved = r.saved; Sound.on = r.settings.soundOn !== false;
+  renderUpdate(r.update);
   renderSoundBtn();
   setMode(r.settings.split ? 2 : 1);
   if (!r.configured) openSetup(false);
@@ -529,6 +553,7 @@ async function boot() {
   if (demo === 'split') { S.slots = [{ kind: 'saved', person: 'Alice' }, null]; renderSlots(); renderCards(); }
   if (demo === 'split2') { setMode(2); S.slots = [{ kind: 'saved', person: 'Alice' }, { kind: 'saved', person: 'Ben' }]; S.countdown = 1; renderSlots(); renderCards(); $('#startSplit').hidden = false; $('#startSplit').replaceChildren(pixelText('START SPLIT-SCREEN 2', { scale: 3, color: '#0b1226' })); }
   if (demo === 'launch') { openLaunch([{ person: 'Alice' }, { person: 'Ben' }]); setStage('Minecraft'); setBar(0.43, 'Minecraft: 212 MB of 489 MB  ·  18.4 MB/s  ·  1873/4120 files'); }
+  if (demo === 'updating') { openLaunch([{ person: 'Alice' }]); setTitle('UPDATING!'); $('#launchSub').textContent = 'Updating UncleCraft… (v0.2.57)'; setBar(0.62, 'New UncleCraft: 32 MB of 52 MB  ·  8.1 MB/s'); }
   if (demo === 'error') { openLaunch([{ person: 'Test1' }]); setStage('login'); launchError({ code: 'no_free_account', message: 'The server is full right now.' }); }
   if (demo === 'setup2') { openSetup(true); $('#wzFingerprint').value = '12:34:56:78:9A:BC:DE:F0:12:34:56:78:9A:BC:DE:F0:12:34:56:78:9A:BC:DE:F0:12:34:56:78:9A:BC:DE:F0'; showStep(2); $('#wzFingerprint').oninput(); }
   if (demo === 'login') { openLogin(); }

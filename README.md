@@ -3,52 +3,21 @@
 The launcher for our private Minecraft server, the **Family Server**. You sign in to the host's server, and
 UncleCraft starts Minecraft already signed in and joins the server. You don't need your own Minecraft account.
 
-Build it yourself on your own computer with the steps below. It takes about 5 minutes the first time.
+## 1. Install (once)
 
-## 1. Install the tools (once)
+Download it from the **Releases** page: <https://github.com/JohnGagliardi/unclecraft/releases/latest>
 
-- **Git:** <https://git-scm.com/downloads>. On a Mac, running `git` in Terminal offers to install it.
-- **.NET 10 SDK:** <https://dotnet.microsoft.com/download/dotnet/10.0>. Pick the **SDK** (not just the runtime) for
-  your system:
-  - Windows x64
-  - macOS Arm64 for Apple M1/M2/M3/M4
-  - macOS x64 for Intel Macs
+- **Windows:** `UncleCraft-win-x64.exe`. Run it. The first time, it installs itself and adds Start menu and desktop
+  shortcuts. After that, open it from the shortcut (the window says **Family Server**).
+- **Mac** (macOS 12 or newer): the zip for your chip, `UncleCraft-mac-arm64.zip` for Apple M1/M2/M3/M4 or
+  `UncleCraft-mac-x64.zip` for Intel Macs. Unzip it and move **UncleCraft** to Applications. Because it's a
+  download, macOS may block the first start; `mac/MAC-README.txt` has the steps.
 
-## 2. Get the code
+After that, UncleCraft updates itself before you play. You never download it again.
 
-This repo is private, so send the host your GitHub username first and accept the invite email from GitHub. Then:
+## 2. Connect (first time only)
 
-```
-git clone https://github.com/JohnGagliardi/unclecraft.git
-cd unclecraft
-```
-
-If it asks you to sign in, use your GitHub account. You can also use `gh repo clone JohnGagliardi/unclecraft` if
-you have the GitHub CLI.
-
-## 3. Build
-
-**Windows** (PowerShell or Command Prompt, inside the `unclecraft` folder):
-
-```
-dotnet publish -c Release -o dist
-```
-
-Run `dist\UncleCraft.exe`. The first time, it installs itself and adds Start menu and desktop shortcuts. After that,
-open it from the shortcut (the window says **Family Server**).
-
-**Mac** (Terminal, inside the `unclecraft` folder; macOS 12 or newer):
-
-```
-sh mac/build-mac.sh
-```
-
-This builds UncleCraft for your Mac's chip and puts it in Applications. Because you built it yourself, macOS
-doesn't block it, so you can skip the Terminal steps in `mac/MAC-README.txt` (those are only for a downloaded zip).
-
-## 4. Connect (first time only)
-
-The host gives you:
+Ask the host for:
 - the **server address** (the port is **25591**; you only need it if the app asks)
 - the **security code**: a long `AB:CD:...` code. **Paste it, don't type it.** It proves you're talking to the real
   server.
@@ -87,15 +56,8 @@ Voice chat is built in. The app installs the mod for you.
 
 ## Updating
 
-Inside the `unclecraft` folder:
-
-```
-git pull
-```
-
-then run the same build command again (Windows: `dotnet publish -c Release -o dist`, then run
-`dist\UncleCraft.exe` once to update the installed copy; Mac: `sh mac/build-mac.sh`). Your saved login and game files
-are kept.
+It's automatic. When there's a new version, pressing Play shows **Updating UncleCraft…**, then the app reopens.
+Press Play again. Your saved login and game files are kept.
 
 ## If something goes wrong
 
@@ -105,10 +67,26 @@ are kept.
 | "Only accepts players at the host's home right now" | The host needs to open the server to the internet. |
 | Security code doesn't match | Paste it again exactly. If it still fails, stop and tell the host. |
 | Invite code rejected | Each code works once. Ask the host for a new one. |
-| Joins worked before, now they don't | Update the app (`git pull` and rebuild). |
+| Joins worked before, now they don't | Close and reopen UncleCraft so it updates. |
+| "Couldn't check for updates" | GitHub couldn't be reached. You can still play; it tries again next time. |
 | "Already playing on this server" | Wait 30 seconds and try again. |
 | No one hears you | Check the microphone permission above and the voice settings (**V**). |
 
 Send the host what the app said, plus the log:
 - **Windows:** `%LOCALAPPDATA%\mc-shared\launcher.log`
 - **Mac:** `~/Library/Logs/UncleCraft/launcher.log`
+
+## For contributors
+
+Building from source needs Git and the **.NET 10 SDK** (<https://dotnet.microsoft.com/download/dotnet/10.0>):
+
+```
+git clone https://github.com/JohnGagliardi/unclecraft.git
+cd unclecraft
+dotnet publish -c Release -o dist     # Windows: then run dist\UncleCraft.exe
+sh mac/build-mac.sh                   # Mac: builds for your chip and puts it in Applications
+```
+
+Your own builds are version `0.2.0-dev`. They show when an update is available but aren't forced to take it, and
+`--no-update` turns the check off so you can test local changes. Every push to `main` (except docs-only changes)
+becomes a signed release that everyone updates to, so changes go through a reviewed pull request.

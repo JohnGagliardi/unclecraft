@@ -46,8 +46,9 @@ the host's broker, and the app starts Minecraft already signed in and joins the 
 - Game connection carried inside the pinned TLS tunnel when the host offers it (ab8e234).
 - Waits for the host's server to wake before launching (6b9a7d3).
 
-**Branches:** `game-tunnel` (ab8e234, already in `main`) and `docs-setup` (173c315, local only, looks superseded by
-d028ad5).
+**Branches:** `game-tunnel` (ab8e234, already in `main`) and `docs-setup` (173c315, local only). **Never push
+`docs-setup`:** its README holds the host's public IP. If any of its README changes are wanted, re-make them on main
+without the IP.
 
 ## In progress
 
@@ -59,7 +60,28 @@ Nothing.
   uses the tunnel when the host offers it. Phase 2 closes the direct game port to the internet (broker and firewall
   side, owned by Broker and network), after which older builds can't join from outside the house. Nothing to do
   here until the orchestrator confirms every friend is on a build with ab8e234 or later.
-- **Auto-update:** the design was sent to the orchestrator on 2026-11-21 and is waiting on 4 decisions. It is in
+- **Auto-update: built 2026-11-21, not committed, not released.**
+  - Files: `Updater.cs`, `ReleaseSig.cs`, `UpdateKey.pub.txt` (the real public key, made by the host), the
+    `.github/workflows/release.yml` workflow, and `tools/sign-release` plus `tools/new-signing-key.ps1` (runs on
+    Windows PowerShell 5.1 and PowerShell 7).
+  - Hooked in: AppCore (update check and forced update before Play), Program and MacProgram (`--update-trial`,
+    single-copy lock handover), WebUi and MainForm, the version headers in Broker.cs, and the UI update phase and
+    notice chip.
+  - Tested in a scratch harness: signature, hash, version, platform, cache, and 404 or unreachable cases, plus
+    swap and rollback with a dummy exe.
+  - Not verified:
+    - swapping the real GUI exe on Windows (including the two copies sharing the WebView2 data folder for up
+      to 90 s)
+    - anything on a Mac (ditto, xattr, `open -n`, moving a running bundle)
+    - the UI in either window
+    - the workflow itself, which has never run
+  - Broker side: record the `X-UncleCraft-Version`, `-Platform` and `-Commit` headers per person, show a "who has
+    updated" list, and optionally add `minAppVersion` (built by the Broker session).
+- **Auto-update v2:** the design moved to GitHub. The user decided: updates come from the GitHub repo, every push to
+  main reaches everyone, and updates are forced. A CI workflow builds and signs each release; the app checks
+  releases/latest, swaps itself and can roll back. v2 was sent 2026-11-21 and is waiting on 3 confirmations: skip
+  docs-only pushes, no approval environment, build with a test key first. The v1 summary below is out of date.
+  Earlier v1 entry: the design was sent to the orchestrator on 2026-11-21 and is waiting on 4 decisions. It is in
   the shared notes folder as `unclecraft-auto-update-design.md`. Short version:
   - updates come from the broker as releases signed with an offline ECDSA key; the public key is built into the
     app, and the broker is only a store

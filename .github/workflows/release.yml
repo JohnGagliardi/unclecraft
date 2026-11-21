@@ -1,0 +1,125 @@
+# Every push to main becomes a signed GitHub Release (v0.2.<run number>) that every UncleCraft install updates to.
+# Docs-only pushes don't release. The signing key (secret UNCLECRAFT_SIGNING_KEY, made by tools/new-signing-key.ps1)
+# is only given to the sign step of the publish job, which only runs on main.
+name: release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  VERSION: 0.2.${{ github.run_number }}
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  win:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '10.0.x'
+      - name: Publish
+        shell: pwsh
+        run: |
+          dotnet publish McShared.csproj -c Release -o dist -p:Version=$env:VERSION
+          if ($LASTEXITCODE) { exit 1 }
+          Move-Item dist/UncleCraft.exe dist/UncleCraft-win-x64.exe
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: win
+          path: dist/UncleCraft-win-x64.exe
+          if-no-files-found: error
+
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build, sign and zip both chips
+        # Same bundle steps as mac/build-mac.sh, with an ad-hoc signature (ditto keeps it in the zip).
+        run: |
+          set -e
+          mkdir -p dist
+          for rid in osx-arm64 osx-x64; do
+            pub="mac/out/$rid"
+            app="mac/out/$rid-app/UncleCraft.app"
+            dotnet publish mac/UncleCraft.Mac.csproj -c Release -r "$rid" --self-contained -o "$pub" -p:Version="$VERSION"
+            mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+            cp -R "$pub/." "$app/Contents/MacOS/"
+            find "$app/Contents/MacOS" \( -name '*.pdb' -o -name '*.xml' \) -delete
+            cp icon/UncleCraft.icns "$app/Contents/Resources/"
+            printf 'APPL????' > "$app/Contents/PkgInfo"
+            sed "s/@VERSION@/$VERSION/g" mac/Info.plist.template > "$app/Contents/Info.plist"
+            chmod +x "$app/Contents/MacOS/UncleCraft"
+            find "$app" -name '*.dylib' -exec codesign --force --sign - {} \;
+            codesign --force --deep --sign - "$app"
+            codesign --verify --deep --strict "$app"
+            ditto -c -k --keepParent "$app" "dist/UncleCraft-mac-${rid#osx-}.zip"
+          done
+          ls -l dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mac
+          path: dist/UncleCraft-mac-*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [win, mac]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: release
+          merge-multiple: true
+      - name: Build the signing tool
+        run: dotnet build tools/sign-release -c Release -o signer
+      - name: Sign release.json
+        env:
+          UNCLECRAFT_SIGNING_KEY: ${{ secrets.UNCLECRAFT_SIGNING_KEY }}
+        run: |
+          if [ -z "$UNCLECRAFT_SIGNING_KEY" ]; then
+            echo "::error::Secret UNCLECRAFT_SIGNING_KEY is not set. Run tools/new-signing-key.ps1 first."
+            exit 1
+          fi
+          dotnet signer/sign-release.dll release "$VERSION" "$GITHUB_SHA" \
+            win-x64=release/UncleCraft-win-x64.exe \
+            osx-arm64=release/UncleCraft-mac-arm64.zip \
+            osx-x64=release/UncleCraft-mac-x64.zip
+      - name: Check the signature against the committed public key
+        run: dotnet signer/sign-release.dll verify release UpdateKey.pub.txt
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
+            --title "UncleCraft $VERSION" --notes "commit $GITHUB_SHA" \
+            release/UncleCraft-win-x64.exe release/UncleCraft-mac-arm64.zip release/UncleCraft-mac-x64.zip \
+            release/release.json release/release.json.sig

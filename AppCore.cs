@@ -23,7 +23,7 @@ public interface IGameWindows
 /// Everything behind the pixel launcher page, shared by the Windows (WebView2) and macOS (Photino) hosts.
 /// Page -> host: JSON {id, type, ...}. Host -> page: {id, ok, data|error} replies and {event, ...} events.
 /// </summary>
-public sealed class AppCore(Action<string> post, IGameWindows windows)
+public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHost? updateHost = null)
 {
     private readonly Settings _s = Settings.Load();
     private BrokerClient? _broker;
@@ -33,6 +33,9 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
     private bool _busy;
     private CancellationTokenSource? _playCts;
     private int _running;
+    private string? _notice; // update notice for the home screen (null = none)
+    private bool _noticeSticky; // set by an update attempt: a later check doesn't clear it
+    private bool _trialWatch;
 
     /// <summary>Games still running (the host asks before closing).</summary>
     public int Running => _running;
@@ -64,6 +67,8 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
                 "forget" => await Forget(m),
                 "play" => await Play(m),
                 "cancel" => CancelPlay(),
+                "checkUpdate" => UpdateJson(await CheckUpdate(true)),
+                "applyUpdate" => await ApplyUpdate(),
                 _ => throw new UiError("error", $"Unknown request {type}"),
             };
             Post(new JsonObject { ["id"] = id, ["ok"] = true, ["data"] = data });
@@ -131,7 +136,14 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
 
     private JsonNode Init()
     {
-        Log.Info($"{Platform.AppName} {Version} on {Platform.Describe()}; data {Paths.Root}");
+        Log.Info($"{Platform.AppName} {Updater.InfoVersion} on {Platform.Describe()}; data {Paths.Root}");
+        if (Updater.IsTrial && !_trialWatch)
+        {
+            _trialWatch = true;
+            SetNotice($"UncleCraft is updated to v{Version}.");
+            _ = TrialHealth();
+        }
+        _ = CheckUpdate(false); // answers with an "update" event
         return new JsonObject
         {
             ["configured"] = HostKey() != null && _s.Server.Trim().Length > 0,
@@ -140,10 +152,105 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
             ["version"] = Version,
             ["platform"] = Platform.Name,
             ["logPath"] = Log.FilePath,
+            ["update"] = UpdateJson(Updater.Last ?? new UpdateCheck("checking")),
         };
     }
 
     private static string Version => Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "?";
+
+    // ---------------- updates ----------------
+
+    private JsonObject UpdateJson(UpdateCheck st) => new()
+    {
+        ["state"] = st.State, ["version"] = st.Release?.Version, ["current"] = Version, ["reason"] = st.Reason, ["notice"] = _notice,
+    };
+
+    private void SetNotice(string text) { _notice = text; _noticeSticky = true; }
+
+    /// <summary>Checks (cached 10 minutes unless forced) and tells the page: {event:"update", state, version, current, reason, notice}.</summary>
+    private async Task<UpdateCheck> CheckUpdate(bool force)
+    {
+        var st = await Updater.Check(force);
+        if (!_noticeSticky)
+            _notice = st.State switch
+            {
+                "failed" => "Couldn't check for updates.",
+                "available-dev" => $"Update available: v{st.Release!.Version} (dev build).",
+                _ => null,
+            };
+        Event("update", UpdateJson(st));
+        return st;
+    }
+
+    /// <summary>
+    /// Downloads, verifies and starts the new version; on success this process exits. Any failure is logged, shown as a
+    /// notice, and the caller carries on (Play goes on with this version). Cancel stops the download part.
+    /// </summary>
+    private async Task InstallUpdate(ReleaseManifest r)
+    {
+        if (Volatile.Read(ref _running) > 0) throw new UiError("update_quit_game", "Quit Minecraft to update UncleCraft first.");
+        using var cts = new CancellationTokenSource();
+        _playCts = cts;
+        Event("phase", new JsonObject { ["phase"] = "update", ["version"] = r.Version });
+        var shown = 0L;
+        try
+        {
+            var file = await Updater.Download(r, (done, total) =>
+            {
+                var now = Environment.TickCount64;
+                if (now - shown < 200 && done < total) return;
+                shown = now;
+                Event("progress", new JsonObject { ["stage"] = "update", ["doneBytes"] = done, ["totalBytes"] = total, ["doneFiles"] = 0, ["totalFiles"] = 1, ["done"] = false });
+            }, cts.Token);
+            _playCts = null;
+            cts.Token.ThrowIfCancellationRequested();
+            Event("phase", new JsonObject { ["phase"] = "update-apply", ["version"] = r.Version }); // no cancel from here
+            await Updater.Apply(r, file, updateHost);
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            throw new UiError("cancelled", "Stopped. Press Play when you're ready.");
+        }
+        catch (Exception e)
+        {
+            Log.Error($"update to {r.Version} failed; staying on {Version}", e);
+            SetNotice(e is UpdateException { Notice: { } n } ? n : $"Update failed, playing on v{Version} for now.");
+            Event("update", UpdateJson(Updater.Last ?? new UpdateCheck("failed")));
+        }
+        finally { _playCts = null; }
+    }
+
+    /// <summary>Bridge "applyUpdate": installs an available update now (also on dev builds, which Play never forces).</summary>
+    private async Task<JsonNode> ApplyUpdate()
+    {
+        if (_busy) throw new UiError("error", "Already starting a game.");
+        _busy = true;
+        try
+        {
+            var st = await CheckUpdate(false);
+            if (st.State is "available" or "available-dev") await InstallUpdate(st.Release!);
+            return UpdateJson(Updater.Last ?? st);
+        }
+        finally { _busy = false; }
+    }
+
+    /// <summary>
+    /// Started with --update-trial: report healthy once the page is up (init) and the host answered a status call, or
+    /// after 45 s with the host offline. Until then the old version waits and rolls back if this one dies.
+    /// </summary>
+    private async Task TrialHealth()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        while (!cts.IsCancellationRequested)
+        {
+            try { await Broker().GetStatus(cts.Token); break; }
+            catch (Exception)
+            {
+                try { await Task.Delay(3000, cts.Token); } catch (OperationCanceledException) { /* 45 s are up */ }
+            }
+        }
+        Updater.MarkHealthy();
+    }
 
     private async Task<JsonNode> Setup(JsonObject m)
     {
@@ -246,6 +353,15 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
     private async Task<JsonNode?> Play(JsonObject m)
     {
         if (_busy) throw new UiError("error", "Already starting a game.");
+        // Play always runs the newest signed release: a newer one is installed first (this process then exits).
+        // GitHub unreachable or a failed update: play on this version (CheckUpdate/InstallUpdate show the notice).
+        _busy = true;
+        try
+        {
+            var upd = await CheckUpdate(false);
+            if (upd.State == "available") await InstallUpdate(upd.Release!);
+        }
+        finally { _busy = false; }
         var broker = Broker();
         var hostKey = HostKey()!;
         var choices = m["players"]!.AsArray().Select(n => ParseChoice(n!, hostKey)).ToList();

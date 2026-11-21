@@ -6,8 +6,10 @@ namespace McShared;
 
 internal static class Program
 {
+    private static Mutex? _single;
+
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
         // Crashes go to launcher.log with a short friendly message instead of the raw .NET dialog.
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
@@ -19,18 +21,34 @@ internal static class Program
         AppDomain.CurrentDomain.UnhandledException += (_, e) => Log.Error("unhandled exception", e.ExceptionObject as Exception);
         TaskScheduler.UnobservedTaskException += (_, e) => { Log.Error("unobserved task exception", e.Exception); e.SetObserved(); };
         ApplicationConfiguration.Initialize();
-        if (Installer.OfferInstall()) return;
+        Updater.ParseArgs(args);
+        // A new version on trial (--update-trial) is already in place: no install offer.
+        if (!Updater.IsTrial && Installer.OfferInstall()) return;
         // One copy at a time (two would share game folders). Taken after the install step: the installer starts the
-        // installed copy and exits without ever holding it.
-        using var single = new Mutex(true, $@"Local\UncleCraft-{Environment.UserName}", out var first);
-        if (!first)
+        // installed copy and exits without ever holding it. During an update the old copy hands it over (retry briefly).
+        _single = new Mutex(false, $@"Local\UncleCraft-{Environment.UserName}");
+        if (!TakeSingleInstance(Updater.IsTrial ? 15_000 : 0))
         {
-            MessageBox.Show("UncleCraft is already open.", Installer.App);
+            if (Updater.IsTrial) Log.Info("update trial: the old version still holds the lock; closing");
+            else MessageBox.Show("UncleCraft is already open.", Installer.App);
             return;
         }
+        if (Updater.IsTrial) Updater.TrialStarted(); else Updater.CleanUp();
         // The pixel launcher needs the WebView2 runtime (built into Windows 11); without it, use the classic window.
         if (WebUiForm.RuntimeAvailable()) Application.Run(new WebUiForm());
         else Application.Run(new MainForm());
+    }
+
+    /// <summary>The one-copy lock. A mutex belongs to the thread that took it: call these on the UI thread.</summary>
+    internal static bool TakeSingleInstance(int waitMs)
+    {
+        try { return _single!.WaitOne(waitMs); }
+        catch (AbandonedMutexException) { return true; } // its last owner was killed (a rolled-back update): ours now
+    }
+
+    internal static void ReleaseSingleInstance()
+    {
+        try { _single?.ReleaseMutex(); } catch (ApplicationException) { /* not held */ }
     }
 }
 

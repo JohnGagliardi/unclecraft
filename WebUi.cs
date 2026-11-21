@@ -9,7 +9,7 @@ namespace McShared;
 /// Windows host for the pixel launcher: a WebView2 page (ui/*.html|css|js, embedded in the exe and served from
 /// https://unclecraft.local/). All logic lives in AppCore (shared with the macOS build).
 /// </summary>
-public sealed class WebUiForm : Form, IGameWindows
+public sealed class WebUiForm : Form, IGameWindows, IUpdateHost
 {
     private const string Origin = "https://unclecraft.local/";
     private readonly WebView2 _web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(18, 26, 48) };
@@ -23,7 +23,7 @@ public sealed class WebUiForm : Form, IGameWindows
 
     public WebUiForm()
     {
-        _core = new AppCore(Post, this);
+        _core = new AppCore(Post, this, this);
         Text = Platform.Title;
         try { Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!); } catch { /* default */ }
         BackColor = Color.FromArgb(18, 26, 48);
@@ -109,4 +109,20 @@ public sealed class WebUiForm : Form, IGameWindows
 
     public Task Arrange(IReadOnlyList<GameProcess> games) =>
         games.Count == 2 ? WindowTiler.TileSideBySide(games[0].Proc, games[1].Proc, LauncherArea()) : Task.CompletedTask;
+
+    // ---------------- IUpdateHost ----------------
+
+    public void Handover(bool toNewVersion) => UpdateHandover.Run(this, toNewVersion);
+}
+
+/// <summary>Both Windows hosts: hand the one-copy lock to the new version and hide, or take it back and show again.</summary>
+internal static class UpdateHandover
+{
+    public static void Run(Form form, bool toNewVersion) => form.Invoke(() =>
+    {
+        if (toNewVersion) { Program.ReleaseSingleInstance(); form.Hide(); return; }
+        if (!Program.TakeSingleInstance(5000)) Log.Info("update rollback: couldn't take the one-copy lock back");
+        form.Show();
+        form.Activate();
+    });
 }

@@ -41,6 +41,10 @@ public sealed class BrokerClient : IDisposable
             ConnectTimeout = TimeSpan.FromSeconds(5),
         };
         _http = new HttpClient(handler) { BaseAddress = new Uri($"https://{HostPort(host, port)}"), Timeout = TimeSpan.FromSeconds(60) };
+        // Which build this is, for the host's version list (brokers that don't know these headers ignore them).
+        _http.DefaultRequestHeaders.Add("X-UncleCraft-Version", Updater.InfoVersion);
+        _http.DefaultRequestHeaders.Add("X-UncleCraft-Platform", Updater.Rid);
+        if (Updater.Commit is { } commit) _http.DefaultRequestHeaders.Add("X-UncleCraft-Commit", commit);
     }
 
     /// <summary>

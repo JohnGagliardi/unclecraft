@@ -32,14 +32,17 @@ public static class MacProgram
     }
 
     [STAThread]
-    public static void Main()
+    public static void Main(string[] args)
     {
         AppDomain.CurrentDomain.UnhandledException += (_, e) => Log.Error("unhandled exception", e.ExceptionObject as Exception);
         TaskScheduler.UnobservedTaskException += (_, e) => { Log.Error("unobserved task exception", e.Exception); e.SetObserved(); };
         Log.Info($"--- {Platform.AppName} (macOS) starting on {Platform.Describe()}");
+        Updater.ParseArgs(args);
+        if (Updater.IsTrial) Updater.TrialStarted(); else Updater.CleanUp();
         try
         {
-            var core = new AppCore(Post, new MacWindows());
+            var host = new MacWindows();
+            var core = new AppCore(Post, host, host);
             _window = new PhotinoWindow()
                 .SetTitle(Platform.Title)
                 .SetUseOsDefaultSize(false)
@@ -97,9 +100,16 @@ public static class MacProgram
         return new MemoryStream(Encoding.UTF8.GetBytes(html));
     }
 
-    /// <summary>macOS can't move other apps' windows without accessibility permission: size the games, don't tile.</summary>
-    private sealed class MacWindows : IGameWindows
+    /// <summary>macOS can't move other apps' windows without accessibility permission: size the games, don't tile.
+    /// Updates: no one-copy lock on macOS (open -n starts the new version), so the handover only minimizes the window.</summary>
+    private sealed class MacWindows : IGameWindows, IUpdateHost
     {
+        public void Handover(bool toNewVersion)
+        {
+            var w = _window;
+            try { w?.Invoke(() => w.SetMinimized(toNewVersion)); } catch (Exception e) { Log.Error("update handover failed", e); }
+        }
+
         public (int width, int height)? SplitSize()
         {
             try

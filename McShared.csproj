@@ -20,10 +20,15 @@
     <DebugType>none</DebugType>
   </PropertyGroup>
   <ItemGroup>
-    <!-- The macOS build (mac/UncleCraft.Mac.csproj) is a separate project that shares the core files. -->
-    <Compile Remove="mac\**;dist-mac\**" />
-    <None Remove="mac\**;dist-mac\**" />
-    <EmbeddedResource Remove="mac\**" />
+    <!-- The macOS build (mac/UncleCraft.Mac.csproj) is a separate project that shares the core files;
+         tools/sign-release is the workflow's signing tool. -->
+    <Compile Remove="mac\**;dist-mac\**;tools\**" />
+    <None Remove="mac\**;dist-mac\**;tools\**" />
+    <EmbeddedResource Remove="mac\**;tools\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Release-signing public key (placeholder until tools/new-signing-key.ps1 is run; then updates turn on). -->
+    <EmbeddedResource Include="UpdateKey.pub.txt" LogicalName="UpdateKey.pub.txt" />
   </ItemGroup>
   <ItemGroup>
     <!-- Pixel launcher UI (WebView2). Served from the exe's resources; shots.ps1 is a dev helper and not shipped. -->

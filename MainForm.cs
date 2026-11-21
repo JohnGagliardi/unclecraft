@@ -6,7 +6,7 @@ namespace McShared;
 /// Classic WinForms window, used when the WebView2 runtime is missing. All logic lives in AppCore: this form sends it
 /// the same JSON requests the pixel page does and shows its replies and events.
 /// </summary>
-public sealed class MainForm : Form, IGameWindows
+public sealed class MainForm : Form, IGameWindows, IUpdateHost
 {
     public const string AppName = "UncleCraft";
 
@@ -36,7 +36,7 @@ public sealed class MainForm : Form, IGameWindows
 
     public MainForm()
     {
-        _core = new AppCore(Post, this);
+        _core = new AppCore(Post, this, this);
         Text = Platform.Title;
         try { Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!); } catch { /* keep default */ }
         FormBorderStyle = FormBorderStyle.FixedSingle;
@@ -122,6 +122,7 @@ public sealed class MainForm : Form, IGameWindows
             _name1.Text = s?["player1"]?.GetValue<string>() ?? "";
             _second.Checked = s?["split"]?.GetValue<bool>() ?? false;
             SetSaved(d?["saved"]);
+            if (d?["update"]?["notice"]?.GetValue<string>() is { } notice) Status(notice);
         }
         catch (UiError e) { Status(e.Message); }
     }
@@ -163,12 +164,17 @@ public sealed class MainForm : Form, IGameWindows
         switch (m["event"]?.GetValue<string>())
         {
             case "status": Status(m["text"]?.GetValue<string>() ?? ""); break;
+            case "progress" when Str(m, "stage") == "update": // the UncleCraft download: one file, show bytes (in KB)
+                Progress((int)((m["doneBytes"]?.GetValue<long>() ?? 0) / 1024), (int)((m["totalBytes"]?.GetValue<long>() ?? 0) / 1024)); break;
             case "progress": Progress((int)(m["doneFiles"]?.GetValue<long>() ?? 0), (int)(m["totalFiles"]?.GetValue<long>() ?? 0)); break;
+            case "update": if (m["notice"]?.GetValue<string>() is { } notice) Status(notice); break;
             case "saved": _pass1.Clear(); _invitePass.Clear(); SetSaved(m["saved"]); break; // logins are done
             case "closed": Status($"{Str(m, "person")}'s game closed; account {Str(m, "account")} is free again."); break;
             case "phase":
                 switch (m["phase"]?.GetValue<string>())
                 {
+                    case "update": Status($"Updating UncleCraft to v{Str(m, "version")}..."); break;
+                    case "update-apply": _cancel.Enabled = false; Status("Updating UncleCraft: starting the new version..."); break;
                     case "login": Status($"Logging in {Str(m, "person")}..."); break;
                     case "starting": _cancel.Enabled = false; Status("Starting Minecraft..."); break;
                     case "booting":
@@ -331,4 +337,6 @@ public sealed class MainForm : Form, IGameWindows
 
     public Task Arrange(IReadOnlyList<GameProcess> games) =>
         games.Count == 2 ? WindowTiler.TileSideBySide(games[0].Proc, games[1].Proc) : Task.CompletedTask;
+
+    public void Handover(bool toNewVersion) => UpdateHandover.Run(this, toNewVersion);
 }
