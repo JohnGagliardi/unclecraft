@@ -117,7 +117,13 @@ public sealed class BrokerClient : IDisposable
         using var res = await _http.GetAsync("/api/v1/client/mods/" + Uri.EscapeDataString(mod.File), HttpCompletionOption.ResponseHeadersRead, ct);
         if (res.StatusCode != HttpStatusCode.OK) throw new BrokerException($"Could not download mod {mod.File} from the host (HTTP {(int)res.StatusCode}).");
         var tmp = dest + ".tmp";
-        await using (var fs = File.Create(tmp)) await res.Content.CopyToAsync(fs, ct);
+        try
+        {
+            await using var fs = File.Create(tmp);
+            await using var src = await res.Content.ReadAsStreamAsync(ct);
+            await IdleCopy.CopyAsync(src, fs, ct);
+        }
+        catch (TimeoutException) { File.Delete(tmp); throw new BrokerException($"Downloading mod {mod.File} from the host stalled; try again.", "timeout"); }
         var hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(tmp)));
         if (!hash.Equals(mod.Sha256, StringComparison.OrdinalIgnoreCase)) { File.Delete(tmp); throw new BrokerException($"Mod {mod.File} was corrupted in download; try again."); }
         File.Move(tmp, dest, true);

@@ -41,6 +41,30 @@ public sealed class InstalledGame
     public bool TestMode { get; init; }
 }
 
+/// <summary>
+/// Stream copy that gives up when no bytes arrive for a while: HttpClient.Timeout stops applying to the body once
+/// ResponseHeadersRead returns, so a stalled download would otherwise wait forever. Throws TimeoutException.
+/// </summary>
+internal static class IdleCopy
+{
+    public static async Task CopyAsync(Stream src, Stream dest, CancellationToken ct, Action<long>? onBytes = null, int idleSeconds = 30)
+    {
+        using var idle = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var buf = new byte[81920];
+        while (true)
+        {
+            idle.CancelAfter(TimeSpan.FromSeconds(idleSeconds));
+            int n;
+            try { n = await src.ReadAsync(buf, idle.Token); }
+            catch (Exception e) when (!ct.IsCancellationRequested && idle.IsCancellationRequested && e is OperationCanceledException or IOException)
+            { throw new TimeoutException($"The download stalled (no data for {idleSeconds} seconds)."); }
+            if (n == 0) return;
+            await dest.WriteAsync(buf.AsMemory(0, n), ct);
+            onBytes?.Invoke(n);
+        }
+    }
+}
+
 /// <summary>Downloads Minecraft (Mojang's public manifests), Mojang's Java runtime, Fabric and the host's mods.</summary>
 /// <summary>Download progress for one stage ("Java", "Minecraft", "Fabric", "Mods"). Done = stage finished.</summary>
 public sealed record InstallProgress(string Stage, long DoneBytes, long TotalBytes, int DoneFiles, int TotalFiles, bool Done);
@@ -259,13 +283,7 @@ public sealed class GameInstaller(BrokerClient broker, Action<string> status, Ac
                     res.EnsureSuccessStatusCode();
                     await using var fs = File.Create(tmp);
                     await using var src = await res.Content.ReadAsStreamAsync(ct);
-                    var buf = new byte[81920];
-                    int n;
-                    while ((n = await src.ReadAsync(buf, ct)) > 0)
-                    {
-                        await fs.WriteAsync(buf.AsMemory(0, n), ct);
-                        onBytes?.Invoke(n);
-                    }
+                    await IdleCopy.CopyAsync(src, fs, ct, onBytes);
                 }
                 if (d.Sha1 != null && Sha1(tmp) != d.Sha1) throw new IOException($"checksum mismatch for {Path.GetFileName(d.Dest)}");
                 File.Move(tmp, d.Dest, true);

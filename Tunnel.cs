@@ -113,12 +113,15 @@ public sealed class GameTunnel(string host, int port, string pinHex, string leas
     {
         var tcp = new TcpClient { NoDelay = true };
         SslStream? ssl = null;
+        // one deadline for the whole setup (connect, TLS, hello, answer): a host that goes quiet must not hang Play
+        using var t = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        t.CancelAfter(TimeSpan.FromSeconds(15));
         try
         {
-            using (var t = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            using (var c = CancellationTokenSource.CreateLinkedTokenSource(t.Token))
             {
-                t.CancelAfter(TimeSpan.FromSeconds(8));
-                try { await tcp.ConnectAsync(host, port, t.Token); }
+                c.CancelAfter(TimeSpan.FromSeconds(8));
+                try { await tcp.ConnectAsync(host, port, c.Token); }
                 catch (Exception e) when (e is SocketException or OperationCanceledException)
                 { throw new BrokerException($"Can't reach the host's server at {host} for the game connection.", "unreachable"); }
             }
@@ -130,7 +133,7 @@ public sealed class GameTunnel(string host, int port, string pinHex, string leas
                     TargetHost = IPAddress.TryParse(host, out _) ? "" : host,
                     RemoteCertificateValidationCallback = BrokerClient.PinCheck(pinHex),
                     ApplicationProtocols = [new SslApplicationProtocol(alpn)],
-                }, ct);
+                }, t.Token);
             }
             catch (System.Security.Authentication.AuthenticationException)
             { throw new BrokerException("The server's certificate does not match the fingerprint you entered. Check it with the host.", "bad_fingerprint"); }
@@ -138,13 +141,19 @@ public sealed class GameTunnel(string host, int port, string pinHex, string leas
                 throw new BrokerException("The host's server is too old for the encrypted game connection. Ask the host to update it.", "no_tunnel");
 
             var hello = new JsonObject { ["v"] = 1, ["lease"] = leaseToken }.ToJsonString() + "\n";
-            await ssl.WriteAsync(Encoding.UTF8.GetBytes(hello), ct);
-            await ssl.FlushAsync(ct);
-            var answer = await ReadLine(ssl, ct);
+            await ssl.WriteAsync(Encoding.UTF8.GetBytes(hello), t.Token);
+            await ssl.FlushAsync(t.Token);
+            var answer = await ReadLine(ssl, t.Token);
             var j = JsonNode.Parse(answer);
             if (j?["ok"]?.GetValue<bool>() != true)
                 throw new BrokerException(j?["message"]?.GetValue<string>() ?? "The host refused the game connection.", j?["error"]?.GetValue<string>() ?? "tunnel_refused");
             return ssl;
+        }
+        catch (Exception e) when (!ct.IsCancellationRequested && (e is OperationCanceledException || (t.IsCancellationRequested && e is IOException)))
+        {
+            if (ssl != null) await ssl.DisposeAsync();
+            tcp.Dispose();
+            throw new BrokerException($"Can't reach the host's server at {host} for the game connection (it stopped answering).", "unreachable");
         }
         catch
         {

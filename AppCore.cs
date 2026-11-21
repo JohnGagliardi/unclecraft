@@ -29,6 +29,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
     private BrokerClient? _broker;
     private string? _brokerKey;
     private bool _busy;
+    private CancellationTokenSource? _playCts;
     private int _running;
 
     /// <summary>Games still running (the host asks before closing).</summary>
@@ -60,6 +61,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
                 "setMode" => SetMode(m),
                 "forget" => await Forget(m),
                 "play" => await Play(m),
+                "cancel" => CancelPlay(),
                 _ => throw new UiError("error", $"Unknown request {type}"),
             };
             Post(new JsonObject { ["id"] = id, ["ok"] = true, ["data"] = data });
@@ -236,6 +238,8 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
             throw new UiError("error", "The two screens need two different people.");
 
         _busy = true;
+        using var cts = new CancellationTokenSource();
+        _playCts = cts;
         var leases = new List<Lease>();
         PlayerChoice? current = null;
         Log.Info($"play: {choices.Count} player(s)");
@@ -247,10 +251,11 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
                 {
                     ["stage"] = p.Stage, ["doneBytes"] = p.DoneBytes, ["totalBytes"] = p.TotalBytes,
                     ["doneFiles"] = p.DoneFiles, ["totalFiles"] = p.TotalFiles, ["done"] = p.Done,
-                })).Install(CancellationToken.None);
+                })).Install(cts.Token);
 
             foreach (var c in choices)
             {
+                cts.Token.ThrowIfCancellationRequested();
                 current = c;
                 Event("phase", new JsonObject { ["phase"] = "login", ["person"] = c.Name });
                 var lease = await Logins.LoginAs(broker, c, hostKey);
@@ -261,6 +266,8 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
 
             // the host's server sleeps when nobody plays; logging in woke it, so wait until it's ready
             await WaitForServer(broker);
+            cts.Token.ThrowIfCancellationRequested(); // last point Back can stop it: after this games start
+            _playCts = null;
 
             Event("phase", new JsonObject { ["phase"] = "starting" });
             var size = leases.Count > 1 ? windows.SplitSize() : null;
@@ -313,13 +320,25 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
             foreach (var l in leases) _ = broker.Release(l);
             throw;
         }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            foreach (var l in leases) _ = broker.Release(l);
+            throw new UiError("cancelled", "Stopped. Press Play when you're ready.");
+        }
         catch (Exception e)
         {
             Log.Error("play failed", e);
             foreach (var l in leases) _ = broker.Release(l);
             throw new UiError("error", e.Message, current?.Name);
         }
-        finally { _busy = false; }
+        finally { _playCts = null; _busy = false; }
+    }
+
+    /// <summary>Back on the launch screen: stops the download/sign-in part of Play. Once games start it does nothing.</summary>
+    private JsonNode? CancelPlay()
+    {
+        try { _playCts?.Cancel(); } catch (ObjectDisposedException) { /* Play just finished */ }
+        return null;
     }
 
     /// <summary>Keeps the lease alive while the game runs, then gives the account back.</summary>

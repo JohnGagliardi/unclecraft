@@ -59,7 +59,15 @@ Nothing.
   uses the tunnel when the host offers it. Phase 2 closes the direct game port to the internet (broker and firewall
   side, owned by Broker and network), after which older builds can't join from outside the house. Nothing to do
   here until the orchestrator confirms every friend is on a build with ab8e234 or later.
-- No app tasks are queued.
+- **Auto-update (queued after the review fix waves):** design first and send it to the orchestrator before
+  building. Cover:
+  - where updates come from: the broker over the pinned TLS channel, or the GitHub repo
+  - how the app checks, downloads and swaps itself on Windows and on the Mac
+  - rollback if a new version won't start
+  - security: every update is verified before it runs, with a signature checked against a public key built into
+    the app. The broker must not be able to push an exe without the signing key.
+  - the app reporting its version to the broker, which answers "who has updated" for tunnel phase 2
+  - what the broker side needs (built by the Broker session)
 
 ## Known bugs and gaps
 
@@ -94,7 +102,7 @@ the host PC.
 
 | # | Sev | Where | What goes wrong | Suggested fix | Size |
 | --- | --- | --- | --- | --- | --- |
-| 1 | High | `Tunnel.cs:127-133`, `Broker.cs:117-120`, `Game.cs:257-268`, `AppCore.cs:250` | A connection that goes quiet hangs Play for good. The tunnel's TLS handshake has no timeout (the 8 s limit covers only the TCP connect), and mod and Mojang downloads have none once the headers arrive. `Install` runs with `CancellationToken.None`. Trigger: the host PC sleeps or Wi-Fi drops partway through. `_busy` stays set, so every later Play says "Already starting a game." until the app is restarted. | One timeout of about 15 s across connect, handshake, hello and answer. A "no bytes for 30 s" timeout on body reads, then the existing retry. A real cancel token for `Install`, wired to Back. | S-M |
+| 1 ✅ fixed (wave 1; Back = Esc / pad B only, no on-screen cancel button; the wake wait can't be cut short) | High | `Tunnel.cs:127-133`, `Broker.cs:117-120`, `Game.cs:257-268`, `AppCore.cs:250` | A connection that goes quiet hangs Play for good. The tunnel's TLS handshake has no timeout (the 8 s limit covers only the TCP connect), and mod and Mojang downloads have none once the headers arrive. `Install` runs with `CancellationToken.None`. Trigger: the host PC sleeps or Wi-Fi drops partway through. `_busy` stays set, so every later Play says "Already starting a game." until the app is restarted. | One timeout of about 15 s across connect, handshake, hello and answer. A "no bytes for 30 s" timeout on body reads, then the existing retry. A real cancel token for `Install`, wired to Back. | S-M |
 | 2 | Med | `Game.cs:209, 216, 365-366` (names from `Broker.cs:110`) | A mod's file name from the host's list goes into `Path.Combine` unchecked. A name like `..\..\x.exe` or a full path writes outside the mods folder (for example over `UncleCraft.exe` or into Startup). The hash doesn't help, because the same list supplies it. This only matters if the broker is compromised. | Accept only `Path.GetFileName(f) == f`, ending in `.jar`, with no invalid characters. Check that the full path stays inside the folder. | S |
 | 3 | Med | `mac/MacProgram.cs:31-33` | The Mac window has no navigation guard, and the message handler doesn't check where a message came from. WKWebView opens an HTML file dropped on the window by default, and that page can then call `setup` with an attacker's server and fingerprint, so later password logins go to the attacker. | Drop bridge messages unless the page is `app://localhost`, and block navigation and drag-drop if Photino allows it. Cheap extra on Windows: check `e.Source` in `WebUi.cs:78`. | S |
 | 4 | Med | `AppCore.cs:140` with `AppCore.cs:90` | Pressing Connect in Settings while a game runs sets `_brokerKey = null` (even with unchanged values). The next status poll then disposes the `BrokerClient` that the game's `Watch()` still uses. Heartbeats fail and `Release` throws, so the host's account stays reserved until its timeout and the UI never hears the game closed. | Keep the client when the key hasn't changed, and don't dispose a client a `Watch` holds (give each `Watch` its own, or dispose it once `_running` is 0). | S |

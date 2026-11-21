@@ -445,6 +445,7 @@ async function play(players) {
   try {
     await call('play', { players });
   } catch (err) {
+    if (err?.code === 'cancelled') { closeLaunch(); toast(err.message); return; }
     const person = err.person;
     if (person && err.code !== 'device_token_invalid') { const p = S.saved.find((x) => sameName(x.person, person)); if (p) p.error = friendly(err).title.toLowerCase().replace(/^./, (c) => c.toUpperCase()); }
     launchError(err);
@@ -500,6 +501,7 @@ async function boot() {
     const m = $('.modal.open'); if (m) { closeModal(m); Sound.back(); return; }
     if ($('#setup').classList.contains('open') && S.settings.server) { $('#setup').classList.remove('open'); return; }
     if (!$('#launchError').hidden) closeLaunch();
+    else if (S.busy && $('#launch').classList.contains('open')) { Sound.back(); setBar(null, 'Stopping…'); call('cancel').catch(() => {}); }
   });
   const r = await call('init');
   S.settings = r.settings; S.saved = r.saved; Sound.on = r.settings.soundOn !== false;
