@@ -71,6 +71,57 @@ Nothing.
   hard to answer for phase 2. Not confirmed whether the app reports a version to the broker.
 - `docs-setup` branch is probably stale and could be deleted (orchestrator's call).
 
+## Review (2026-11-21)
+
+Review only: nothing was fixed, built or run. Three subagents read three parts of the code: security, game and
+downloads, and UI, hosts and packages. Each finding was checked against the code, and the top ones were checked
+again here. Where two subagents found the same thing, it appears once.
+
+**Counts:** 1 high, 8 medium, 9 low.
+
+**Checked and clean:**
+- **Certificate pin:** a SHA-256 of the full certificate, compared in fixed time. There is no fallback to accepting
+  any certificate, and the tunnel uses the same check.
+- **Saved logins:** DPAPI on Windows. On the Mac, Keychain writes go through stdin, never the command line.
+- **Logging:** no tokens or passwords reach `launcher.log`.
+- **Local listeners:** the tunnel and the voice relay listen on 127.0.0.1 only.
+- **Mojang downloads:** checked against their SHA-1 and written to `.part` first. Mods are checked against their
+  SHA-256 the same way.
+- **Windows web view:** navigation is locked to the embedded page, and there is no `innerHTML` with server text.
+
+**Ports:** the API and the game tunnel both run on **25591**. 25590 is the broker's admin API, reachable only from
+the host PC.
+
+| # | Sev | Where | What goes wrong | Suggested fix | Size |
+| --- | --- | --- | --- | --- | --- |
+| 1 | High | `Tunnel.cs:127-133`, `Broker.cs:117-120`, `Game.cs:257-268`, `AppCore.cs:250` | A connection that goes quiet hangs Play for good. The tunnel's TLS handshake has no timeout (the 8 s limit covers only the TCP connect), and mod and Mojang downloads have none once the headers arrive. `Install` runs with `CancellationToken.None`. Trigger: the host PC sleeps or Wi-Fi drops partway through. `_busy` stays set, so every later Play says "Already starting a game." until the app is restarted. | One timeout of about 15 s across connect, handshake, hello and answer. A "no bytes for 30 s" timeout on body reads, then the existing retry. A real cancel token for `Install`, wired to Back. | S-M |
+| 2 | Med | `Game.cs:209, 216, 365-366` (names from `Broker.cs:110`) | A mod's file name from the host's list goes into `Path.Combine` unchecked. A name like `..\..\x.exe` or a full path writes outside the mods folder (for example over `UncleCraft.exe` or into Startup). The hash doesn't help, because the same list supplies it. This only matters if the broker is compromised. | Accept only `Path.GetFileName(f) == f`, ending in `.jar`, with no invalid characters. Check that the full path stays inside the folder. | S |
+| 3 | Med | `mac/MacProgram.cs:31-33` | The Mac window has no navigation guard, and the message handler doesn't check where a message came from. WKWebView opens an HTML file dropped on the window by default, and that page can then call `setup` with an attacker's server and fingerprint, so later password logins go to the attacker. | Drop bridge messages unless the page is `app://localhost`, and block navigation and drag-drop if Photino allows it. Cheap extra on Windows: check `e.Source` in `WebUi.cs:78`. | S |
+| 4 | Med | `AppCore.cs:140` with `AppCore.cs:90` | Pressing Connect in Settings while a game runs sets `_brokerKey = null` (even with unchanged values). The next status poll then disposes the `BrokerClient` that the game's `Watch()` still uses. Heartbeats fail and `Release` throws, so the host's account stays reserved until its timeout and the UI never hears the game closed. | Keep the client when the key hasn't changed, and don't dispose a client a `Watch` holds (give each `Watch` its own, or dispose it once `_running` is 0). | S |
+| 5 | Med | `MainForm.cs:198-279` vs `AppCore.cs:263, 294-301` | The classic fallback (no WebView2) has drifted from AppCore. It doesn't wait for the server to wake, so on a sleeping server the game joins too early. It doesn't catch an early Java crash (`java_failed`). An invite can't set the player's own password (`MainForm.cs:68`), and the saved cards don't refresh. | Rebuild MainForm on AppCore, removing about 150 duplicated lines. Minimum fix: make `WaitForServer` public and call it. | M (S minimum) |
+| 6 | Med | `Logins.cs:26-31`, `mac/SecretStore.Mac.cs` | Any error reading a saved login deletes it for good. On the Mac, clicking Deny on a Keychain prompt or cancelling a Keychain unlock makes `Read()` return null, and the login is removed. The message also says "this Windows account" on the Mac. | Delete only on a definite corrupt result: `CryptographicException` or `FormatException` on Windows, `security` exit 44 on the Mac. Otherwise show "try again", in wording that fits both platforms. | S |
+| 7 | Med | `AppCore.cs:269-280`, `Game.cs:353-367, 418`, `Program.cs:59` | Play can be clicked again while a game runs, and each launch always uses slot `i+1`. There is no single-instance lock either. A second launch on slot p1 fails with a raw "file in use" error on `launcher-java.log` or a mod jar, or shares options and mods with the running game. | Track running slots and pick a free one, or say "Player 1 is already playing". Add a named mutex so only one copy runs. | M |
+| 8 | Med | `Game.cs:65, 78`, `AppCore.cs:316-320`, `Broker.cs:117` | Every Play fetches Mojang's version list, even when everything is installed. With no internet, or with Mojang blocked or down, nobody can play, and the child sees raw text like `No such host is known. (piston-meta.mojang.com:443)`. `DownloadMod` errors and checksum or JSON errors also show raw .NET text. | Start from files on disk when Mojang can't be reached. Turn network and disk errors into codes the page knows (`unreachable`, `download_failed`) with kid-friendly wording, and keep the raw text in the log. | M |
+| 9 | Med | `MainForm.cs:114, 160, 289-305`, `Program.cs` | In the classic UI, "Forget" while the host is offline throws on the UI thread (an async-void handler with no try), and the user gets the raw .NET crash dialog. `MainForm.Watch` has no catch either. Program.cs has no global exception handlers, so nothing is logged. | Wrap both calls the way AppCore does. Add `Application.ThreadException`, `UnhandledException` and `UnobservedTaskException` handlers that call `Log.Error`. | S |
+| 10 | Low | `Broker.cs:61-67, 43`, `AppCore.cs:137` | A port outside 1-65535 (for example `host:255910`) passes `ParseAddress`, then `new Uri` throws "Invalid URI: Invalid port specified." outside the try, and it is logged as a crash. `host:abc` silently uses the default port. | Check that the port is a number in range inside `ParseAddress`, and throw the friendly address error. | S |
+| 11 | Low | `Game.cs:75-81, 143-152` | The Fabric profile and the Java runtime list are written once and never checked. A crash during `WriteAllTextAsync` leaves a cut-off file, and every later launch fails to parse it, with a raw error. The runtime list's own `sha1` is ignored. | Write to `.part`, then move it into place. On a parse failure, delete the file and download it again. Check the SHA-1. | S |
+| 12 | Low | `mac/SecretStore.Mac.cs:50-55` | `ReadToEnd()` blocks until `security` exits, so `WaitForExit(15_000)` never limits anything. An unanswered Keychain unlock prompt hangs the login. If the wait ever does time out, `p.ExitCode` throws. | Read stdout and stderr asynchronously, wait with a timeout, kill the process on timeout, and return a failure code. | S |
+| 13 | Low | `Program.cs:35-48` | Self-install doesn't compare versions, so running an old exe left in Downloads replaces a newer installed copy. `File.Copy` writes straight over the installed exe, so a failure partway (disk full, antivirus) leaves a broken exe that the shortcuts point to. | Compare `FileVersionInfo` and warn on a downgrade. Copy to `.new`, then `File.Move(overwrite)`. | S |
+| 14 | Low | `Game.cs:423` | `launcher-java.log` masks the access token but not the one-time join name, which Minecraft prints at startup. It is used up on join, hence low. | Also mask `token.Username` in `OnLine`. | S |
+| 15 | Low | `Logins.cs:6` | `PasswordChoice`'s generated `ToString()` includes the password. `InviteChoice` already overrides it. No log line prints a choice today, so this would only bite on a future log line. | Override `ToString` or `PrintMembers` to mask it. | S |
+| 16 | Low | `Game.cs:209, 366` | Cached and per-game mods are judged up to date by size only. If the host swaps in a different build with the same name and size, players keep the old jar without any error. | Keep a `name -> sha256` record beside the cache and compare against it. | S |
+| 17 | Low | `WebUi.cs:101-108` vs `Program.cs:107` | Split-screen sizes the games for the launcher's monitor but tiles them on the primary monitor. Trigger: the launcher sits on a second monitor with a different resolution, so the games start at the wrong size and then jump. | Pass the target screen's working area into `TileSideBySide`. | S |
+| 18 | Low | `McShared.csproj:12, 42`, `mac/UncleCraft.Mac.csproj:11`, `mac/build-mac.ps1:7`, `mac/build-mac.sh:7, 24-44`, `mac/package_mac.py:11-30` | `0.1.0` is written in 5 places, and the plist template is duplicated, so bumping the csproj alone leaves the Mac build on the old version. That also blocks a "who has updated?" check. `McShared.csproj:42` is a dead `Delete`. | Read the version from the csproj (`dotnet msbuild -getProperty:Version`) and share one plist template. Bump the version on each change that matters. Delete line 42. | S |
+
+### Update recommendations
+
+- **Microsoft.Web.WebView2:** 1.0.2903.40 → 1.0.4370.26 (latest stable). The APIs used here are unchanged. Worth
+  doing.
+- **Photino.NET:** 4.0.16 is already the latest.
+- **.NET:** net10.0 / net10.0-windows (.NET 10 LTS) is current. No deprecated APIs were found.
+- **Version number:** start bumping it (see #18) before tunnel phase 2, so you can tell who has updated.
+
 ## Done log
 
 - 2026-11-21: plan file set up. No code changes.
+- 2026-11-21: code review written (section above). No code changes.
