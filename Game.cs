@@ -65,6 +65,51 @@ internal static class IdleCopy
     }
 }
 
+/// <summary>
+/// "jar name -> sha256" for one mods folder (sha256.json beside the jars), written after each verified download or copy,
+/// so a launch trusts size + recorded hash without re-hashing every jar. A jar with the right size but no record
+/// (folders from before this file existed) is hashed once and recorded.
+/// </summary>
+internal sealed class ModHashes
+{
+    private readonly string _dir, _path;
+    private readonly Dictionary<string, string> _map = new(StringComparer.OrdinalIgnoreCase);
+
+    public ModHashes(string dir)
+    {
+        _dir = dir;
+        _path = Path.Combine(dir, "sha256.json");
+        try
+        {
+            if (File.Exists(_path) && JsonNode.Parse(File.ReadAllText(_path)) is JsonObject o)
+                foreach (var (k, v) in o) if (v is JsonValue s && s.TryGetValue<string>(out var h)) _map[k] = h;
+        }
+        catch (System.Text.Json.JsonException) { _map.Clear(); } // damaged: jars get re-checked
+    }
+
+    public bool IsCurrent(ModInfo m)
+    {
+        var f = Path.Combine(_dir, m.File);
+        if (!File.Exists(f) || new FileInfo(f).Length != m.Size) return false;
+        if (_map.TryGetValue(m.File, out var h)) return h.Equals(m.Sha256, StringComparison.OrdinalIgnoreCase);
+        using (var fs = File.OpenRead(f))
+            if (!Convert.ToHexString(SHA256.HashData(fs)).Equals(m.Sha256, StringComparison.OrdinalIgnoreCase)) return false;
+        Set(m);
+        return true;
+    }
+
+    public void Set(ModInfo m) { _map[m.File] = m.Sha256; Save(); }
+    public void Remove(string file) { if (_map.Remove(file)) Save(); }
+
+    private void Save()
+    {
+        var o = new JsonObject();
+        foreach (var (k, v) in _map) o[k] = v;
+        File.WriteAllText(_path + ".part", o.ToJsonString());
+        File.Move(_path + ".part", _path, true);
+    }
+}
+
 /// <summary>Downloads Minecraft (Mojang's public manifests), Mojang's Java runtime, Fabric and the host's mods.</summary>
 /// <summary>Download progress for one stage ("Java", "Minecraft", "Fabric", "Mods"). Done = stage finished.</summary>
 public sealed record InstallProgress(string Stage, long DoneBytes, long TotalBytes, int DoneFiles, int TotalFiles, bool Done);
@@ -104,13 +149,13 @@ public sealed class GameInstaller(BrokerClient broker, Action<string> status, Ac
 
         status($"Reading Fabric {manifest.FabricLoaderVersion}...");
         var fabricPath = Path.Combine(Paths.Versions, $"fabric-{manifest.FabricLoaderVersion}-{ver}.json");
-        if (!File.Exists(fabricPath))
+        var fabric = await SavedJson(fabricPath, async () =>
         {
             Directory.CreateDirectory(Paths.Versions);
             var fj = await Http.GetStringAsync($"https://meta.fabricmc.net/v2/versions/loader/{ver}/{manifest.FabricLoaderVersion}/profile/json", ct);
-            await File.WriteAllTextAsync(fabricPath, fj, ct);
-        }
-        var fabric = JsonNode.Parse(await File.ReadAllTextAsync(fabricPath, ct))!;
+            await File.WriteAllTextAsync(fabricPath + ".part", fj, ct);
+            File.Move(fabricPath + ".part", fabricPath, true);
+        }, ct);
 
         var downloads = new List<Download>();
 
@@ -172,16 +217,15 @@ public sealed class GameInstaller(BrokerClient broker, Action<string> status, Ac
         var javaExe = Path.Combine(runtimeDir, Local(Platform.JavaExeRelative));
         var rtKey = Platform.JavaRuntimeKey;
         var rtManifestPath = Path.Combine(Paths.Runtime, rtKey == "windows-x64" ? component + ".manifest.json" : $"{component}.{rtKey}.manifest.json");
-        if (!File.Exists(rtManifestPath))
+        var rtFiles = (await SavedJson(rtManifestPath, async () =>
         {
             status("Finding the Java runtime...");
             var all = JsonNode.Parse(await Http.GetStringAsync(JavaRuntimeIndex, ct))!;
             var rt = all[rtKey]?[component]?.AsArray().FirstOrDefault()
                 ?? throw new Exception($"Mojang has no Java runtime '{component}' for {rtKey}.");
-            Directory.CreateDirectory(Paths.Runtime);
-            await File.WriteAllTextAsync(rtManifestPath, await Http.GetStringAsync(rt["manifest"]!["url"]!.GetValue<string>(), ct), ct);
-        }
-        var rtFiles = JsonNode.Parse(await File.ReadAllTextAsync(rtManifestPath, ct))!["files"]!.AsObject();
+            var m = rt["manifest"]!;
+            await Fetch(new Download(m["url"]!.GetValue<string>(), rtManifestPath, m["sha1"]?.GetValue<string>(), m["size"]?.GetValue<long>() ?? -1, "Java"), ct);
+        }, ct))["files"]!.AsObject();
         var executables = new List<string>();
         var links = new List<(string path, string target)>();
         foreach (var (rel, f) in rtFiles)
@@ -239,14 +283,16 @@ public sealed class GameInstaller(BrokerClient broker, Action<string> status, Ac
 
         // the host's mods
         Directory.CreateDirectory(Paths.ModCache);
-        var modTodo = manifest.Mods.Where(m => { var f = Path.Combine(Paths.ModCache, m.File); return !File.Exists(f) || new FileInfo(f).Length != m.Size; }).ToList();
+        var cached = new ModHashes(Paths.ModCache);
+        var modTodo = manifest.Mods.Where(m => !cached.IsCurrent(m)).ToList();
         var modTotal = modTodo.Sum(m => m.Size);
         long modDone = 0;
         for (var i = 0; i < modTodo.Count; i++)
         {
             progress(new InstallProgress("Mods", modDone, modTotal, i, modTodo.Count, false));
             status($"Downloading mod {modTodo[i].File} from the host...");
-            await broker.DownloadMod(modTodo[i], Path.Combine(Paths.ModCache, modTodo[i].File), ct);
+            await broker.DownloadMod(modTodo[i], Path.Combine(Paths.ModCache, modTodo[i].File), ct); // checks the sha256
+            cached.Set(modTodo[i]);
             modDone += modTodo[i].Size;
         }
         progress(new InstallProgress("Mods", modTotal, modTotal, modTodo.Count, modTodo.Count, true));
@@ -273,6 +319,20 @@ public sealed class GameInstaller(BrokerClient broker, Action<string> status, Ac
 
     private static List<string> StringArgs(JsonNode? n) =>
         n is JsonArray a ? a.Where(x => x is JsonValue).Select(x => x!.GetValue<string>()).ToList() : [];
+
+    /// <summary>A small JSON file saved by an earlier run: fetched when missing, and fetched again once if it is cut off.</summary>
+    private static async Task<JsonNode> SavedJson(string path, Func<Task> fetch, CancellationToken ct)
+    {
+        if (!File.Exists(path)) await fetch();
+        try { return JsonNode.Parse(await File.ReadAllTextAsync(path, ct))!; }
+        catch (System.Text.Json.JsonException e)
+        {
+            Log.Info($"{Path.GetFileName(path)} is damaged ({e.Message}); downloading it again");
+            File.Delete(path);
+            await fetch();
+            return JsonNode.Parse(await File.ReadAllTextAsync(path, ct))!;
+        }
+    }
 
     private static bool IsPresent(Download d) => File.Exists(d.Dest) && (d.Size < 0 || new FileInfo(d.Dest).Length == d.Size);
 
@@ -387,10 +447,13 @@ public static class GameLauncher
         var wanted = g.Mods.Select(m => m.File).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var f in Directory.GetFiles(modsDir, "*.jar"))
             if (!wanted.Contains(Path.GetFileName(f))) File.Delete(f);
+        var copied = new ModHashes(modsDir);
         foreach (var m in g.Mods)
         {
-            var dest = Path.Combine(modsDir, m.File);
-            if (!File.Exists(dest) || new FileInfo(dest).Length != m.Size) File.Copy(Path.Combine(Paths.ModCache, m.File), dest, true);
+            if (copied.IsCurrent(m)) continue;
+            copied.Remove(m.File);
+            File.Copy(Path.Combine(Paths.ModCache, m.File), Path.Combine(modsDir, m.File), true); // the cache copy was verified
+            copied.Set(m);
         }
 
         var natives = Path.Combine(gameDir, "natives");
@@ -409,7 +472,7 @@ public static class GameLauncher
             ["version_type"] = "release",
             ["natives_directory"] = natives,
             ["launcher_name"] = "UncleCraft",
-            ["launcher_version"] = "0.1.0",
+            ["launcher_version"] = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0",
             ["classpath"] = string.Join(Path.PathSeparator, g.Classpath),
             ["classpath_separator"] = Path.PathSeparator.ToString(),
             ["library_directory"] = Paths.Libraries,
@@ -439,6 +502,12 @@ public static class GameLauncher
 
         // Log the command with secrets removed (token, and the join name, which is a one-time pass in interim mode).
         var shown = psi.ArgumentList.Select(a => a == token.AccessToken || a == token.Username ? "***" : a.Contains(Path.PathSeparator) && a.Length > 300 ? "<classpath>" : a);
+        string Mask(string line)
+        {
+            if (token.AccessToken.Length > 0) line = line.Replace(token.AccessToken, "***");
+            if (token.Username.Length > 0) line = line.Replace(token.Username, "***");
+            return line;
+        }
         Log.Info($"launch p{slot}: {g.JavaExe} {string.Join(' ', shown)}");
 
         var javaLog = new StreamWriter(Path.Combine(gameDir, "launcher-java.log"), false) { AutoFlush = true };
@@ -446,7 +515,7 @@ public static class GameLauncher
         void OnLine(string? line)
         {
             if (line == null) return;
-            lock (javaLog) { try { javaLog.WriteLine(line.Replace(token.AccessToken, "***")); } catch { /* closed */ } }
+            lock (javaLog) { try { javaLog.WriteLine(Mask(line)); } catch { /* closed */ } }
             // LWJGL logs its backend when the game window is created; "Connecting to" = quick-play join started.
             if (line.Contains("Backend library:") || line.Contains("Connecting to")) gp.MarkWindowReady();
         }

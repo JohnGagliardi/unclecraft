@@ -8,7 +8,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>UncleCraft</AssemblyName>
     <RootNamespace>McShared</RootNamespace>
-    <Version>0.1.0</Version>
     <RuntimeIdentifiers>osx-arm64;osx-x64</RuntimeIdentifiers>
     <SelfContained>true</SelfContained>
     <UseAppHost>true</UseAppHost>

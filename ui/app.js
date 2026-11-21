@@ -36,7 +36,7 @@ const ERRORS = {
   bad_credentials: ['WRONG NAME OR PASSWORD', 'Check the spelling, or ask the host to reset your password.'],
   device_token_invalid: ['PLEASE LOG IN AGAIN', 'Your saved login expired or the host removed it. Enter your password once.'],
   saved_login_locked: ["COULDN'T OPEN SAVED LOGIN", 'Your computer kept the saved login locked. Try again, and allow access if it asks (on a Mac: Keychain).'],
-  no_free_account: ['ALL ACCOUNTS ARE BUSY', 'Everyone is playing! Someone needs to quit first. The server panel shows who is on.'],
+  no_free_account: ['THE SERVER IS FULL', 'The server is full right now. Try again in a bit.'],
   app_not_approved: ['HOST SETUP NOT FINISHED', "The host's Microsoft app isn't approved by Mojang yet. Nothing to fix on your PC."],
   test_mode_local_only: ['TEST MODE IS ON', "Right now only the host's own PC can play. Ask the host to turn test mode off."],
   test_mode_off: ['TEST ACCOUNT', 'Test mode is off on the host, so this test account cannot play.'],
@@ -265,7 +265,7 @@ function renderServer() {
     light.className = 'light off';
     const f = friendly(st?.error);
     $('#srvState').textContent = S.settings.server ? f.title.charAt(0) + f.title.slice(1).toLowerCase() : 'Not set up yet';
-    $('#accMeter').replaceChildren(); $('#accText').textContent = S.settings.server ? f.hint : 'Open settings to enter the host.';
+    $('#srvHint').textContent = S.settings.server ? f.hint : 'Open settings to enter the host.';
     $('#playing').replaceChildren(el('li', { className: 'none', textContent: '-' }));
     $('#testBanner').hidden = true;
     $('#modeChip').hidden = true;
@@ -275,16 +275,17 @@ function renderServer() {
   $('#srvState').textContent = st.testMode ? 'Online (test mode)' : 'Online';
   $('#testBanner').hidden = !st.testMode;
   $('#modeChip').hidden = st.mode !== 'interim'; // small label, not the test-mode banner
-  const meter = $('#accMeter'); meter.replaceChildren();
-  for (let i = 0; i < st.accounts.total; i++) meter.append(el('i', { className: i < st.accounts.free ? 'free' : 'busy' }));
-  $('#accText').textContent = st.accounts.total ? `${st.accounts.free} of ${st.accounts.total} free` : 'No accounts set up on the host yet.';
+  $('#srvHint').textContent = '';
   const ul = $('#playing'); ul.replaceChildren();
-  if (!st.playing.length) ul.append(el('li', { className: 'none', textContent: 'Nobody yet. Be the first!' }));
-  for (const p of st.playing) {
+  const playing = st.playing || [];
+  if (!playing.length) ul.append(el('li', { className: 'none', textContent: 'Nobody yet. Be the first!' }));
+  for (const p of playing) {
+    const console_ = p.platform === 'console'; // old brokers send no platform: they only listed launcher (PC) players
+    const sub = [p.account ? `as ${p.account}` : '', p.world ? `in ${p.world}` : ''].filter(Boolean).join(' · ');
     ul.append(el('li', {},
       el('img', { src: avatarUrl(p.person, 6), alt: '' }),
-      el('div', {}, el('div', { className: 'p-name', textContent: p.person }),
-        el('div', { className: 'p-acc', textContent: `as ${p.account} ` }, el('span', { className: 'p-state ' + p.state, textContent: p.state === 'online' ? '● IN GAME' : '● STARTING' })))));
+      el('div', {}, el('div', { className: 'p-name', textContent: `${p.person} ` }, el('span', { className: 'p-plat' + (console_ ? ' console' : ''), textContent: console_ ? 'CONSOLE' : 'PC' })),
+        el('div', { className: 'p-acc', textContent: sub ? `${sub} ` : '' }, el('span', { className: 'p-state ' + p.state, textContent: p.state === 'reserved' ? '● STARTING' : '● IN GAME' })))));
   }
 }
 
@@ -326,7 +327,7 @@ async function wizardConnect() {
     const r = await call('setup', { server, fingerprint: fp });
     S.settings = r.settings; S.saved = r.saved;
     $('#wzResultTitle').replaceChildren(pixelText('CONNECTED!', { scale: 5, color: '#8ae234', shadow: '#0b1226' }));
-    $('#wzResultText').textContent = r.testMode ? 'The host is in TEST MODE right now: only the host\'s own PC can play.' : `You're all set. ${r.free} of ${r.total} accounts are free right now.`;
+    $('#wzResultText').textContent = r.testMode ? 'The host is in TEST MODE right now: only the host\'s own PC can play.' : 'You\'re all set.';
     $('#wzRetry').hidden = true; $('#wzDone').hidden = false;
     Sound.success();
   } catch (e) {
@@ -390,7 +391,7 @@ function launchError(err) {
   setBar(0, '');
   $('#launchCancel').hidden = true;
   $('#errTitle').replaceChildren(pixelText(f.title, { scale: 3, color: '#ffd1d6' }));
-  $('#errText').textContent = f.message && f.message !== f.title ? f.message : '';
+  $('#errText').textContent = f.message && f.message !== f.title && err?.code !== 'no_free_account' ? f.message : ''; // broker text for a full server talks about accounts
   $('#errHint').textContent = f.hint;
   const act = $('#errAction');
   act.hidden = true;
@@ -496,7 +497,7 @@ const Demo = {
   ],
   async call(type) {
     if (type === 'init') return { configured: demo !== 'setup', settings: { server: '192.168.1.20', fingerprint: '12:34:56', soundOn: true, split: demo === 'split' }, saved: this.saved };
-    if (type === 'status') return { ok: true, testMode: demo === 'test', mode: demo === 'test' ? 'test' : demo === 'interim' ? 'interim' : 'approved', accounts: { total: 6, free: 4 }, playing: [{ person: 'Ben', account: 'PoolAccount3', state: 'online' }, { person: 'Uncle', account: 'PoolAccount1', state: 'reserved' }] };
+    if (type === 'status') return { ok: true, testMode: demo === 'test', mode: demo === 'test' ? 'test' : demo === 'interim' ? 'interim' : 'approved', accounts: { total: 6, free: 4 }, playing: [{ person: 'Ben', account: 'PoolAccount3', state: 'online', platform: 'java', world: 'Skyreach' }, { person: 'Mia', account: '', state: 'online', platform: 'console', world: 'Skyreach' }, { person: 'Uncle', account: 'PoolAccount1', state: 'reserved' }] };
     return {};
   },
 };
@@ -528,7 +529,7 @@ async function boot() {
   if (demo === 'split') { S.slots = [{ kind: 'saved', person: 'Alice' }, null]; renderSlots(); renderCards(); }
   if (demo === 'split2') { setMode(2); S.slots = [{ kind: 'saved', person: 'Alice' }, { kind: 'saved', person: 'Ben' }]; S.countdown = 1; renderSlots(); renderCards(); $('#startSplit').hidden = false; $('#startSplit').replaceChildren(pixelText('START SPLIT-SCREEN 2', { scale: 3, color: '#0b1226' })); }
   if (demo === 'launch') { openLaunch([{ person: 'Alice' }, { person: 'Ben' }]); setStage('Minecraft'); setBar(0.43, 'Minecraft: 212 MB of 489 MB  ·  18.4 MB/s  ·  1873/4120 files'); }
-  if (demo === 'error') { openLaunch([{ person: 'Test1' }]); setStage('login'); launchError({ code: 'no_free_account', message: 'All Minecraft accounts are in use right now.' }); }
+  if (demo === 'error') { openLaunch([{ person: 'Test1' }]); setStage('login'); launchError({ code: 'no_free_account', message: 'The server is full right now.' }); }
   if (demo === 'setup2') { openSetup(true); $('#wzFingerprint').value = '12:34:56:78:9A:BC:DE:F0:12:34:56:78:9A:BC:DE:F0:12:34:56:78:9A:BC:DE:F0:12:34:56:78:9A:BC:DE:F0'; showStep(2); $('#wzFingerprint').oninput(); }
   if (demo === 'login') { openLogin(); }
   if (demo === 'invite') { openLogin('', '', 'invite'); $('#inviteCode').value = '7k2mq9xd4hrt8wza'; $('#inviteCode').oninput(); }

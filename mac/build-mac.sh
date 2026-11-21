@@ -4,7 +4,8 @@
 # A locally built app isn't quarantined and gets an ad-hoc signature here, so no Gatekeeper steps are needed.
 set -e
 here="$(cd "$(dirname "$0")" && pwd)"
-version=0.1.0
+version="$(dotnet msbuild "$here/UncleCraft.Mac.csproj" -getProperty:Version | tr -d '[:space:]')" # from ../Directory.Build.props
+[ -n "$version" ] || { echo "Could not read the version"; exit 1; }
 case "$(uname -m)" in
   arm64)  rid=osx-arm64 ;;
   x86_64) rid=osx-x64 ;;
@@ -21,27 +22,7 @@ cp -R "$pub/." "$app/Contents/MacOS/"
 find "$app/Contents/MacOS" \( -name '*.pdb' -o -name '*.xml' \) -delete
 cp "$here/../icon/UncleCraft.icns" "$app/Contents/Resources/"
 printf 'APPL????' > "$app/Contents/PkgInfo"
-cat > "$app/Contents/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleName</key><string>UncleCraft</string>
-  <key>CFBundleDisplayName</key><string>UncleCraft</string>
-  <key>CFBundleIdentifier</key><string>local.unclecraft.launcher</string>
-  <key>CFBundleExecutable</key><string>UncleCraft</string>
-  <key>CFBundleIconFile</key><string>UncleCraft.icns</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>$version</string>
-  <key>CFBundleVersion</key><string>$version</string>
-  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-  <key>LSMinimumSystemVersion</key><string>12.0</string>
-  <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
-  <key>NSHighResolutionCapable</key><true/>
-  <key>NSHumanReadableCopyright</key><string>UncleCraft launcher (unofficial; not affiliated with Mojang or Microsoft)</string>
-</dict>
-</plist>
-EOF
+sed "s/@VERSION@/$version/g" "$here/Info.plist.template" > "$app/Contents/Info.plist" # shared with package_mac.py
 chmod +x "$app/Contents/MacOS/UncleCraft"
 find "$app" -name '*.dylib' -exec codesign --force --sign - {} \;
 codesign --force --deep --sign - "$app"

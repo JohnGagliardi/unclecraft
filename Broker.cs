@@ -58,16 +58,23 @@ public sealed class BrokerClient : IDisposable
             var end = s.IndexOf(']');
             var h = end > 0 ? s[1..end] : s.Trim('[', ']');
             var rest = end > 0 ? s[(end + 1)..] : "";
-            return (h, rest.StartsWith(':') && int.TryParse(rest[1..], out var p6) ? p6 : defaultPort);
+            if (rest.Length > 0 && !rest.StartsWith(':')) throw BadAddress();
+            return (h, rest.Length > 0 ? ParsePort(rest[1..]) : defaultPort);
         }
         var colons = s.Count(c => c == ':');
         if (colons == 1)
         {
             var i = s.IndexOf(':');
-            return (s[..i], int.TryParse(s[(i + 1)..], out var p) ? p : defaultPort);
+            return (s[..i], ParsePort(s[(i + 1)..]));
         }
         return (s, defaultPort); // plain host, or bare IPv6
     }
+
+    private static int ParsePort(string s) =>
+        int.TryParse(s, System.Globalization.NumberStyles.None, null, out var p) && p is >= 1 and <= 65535 ? p : throw BadAddress();
+
+    private static BrokerException BadAddress() =>
+        new("That address doesn't look right. Use an IP like 192.168.1.20 or a name like uncle.example.org.", "bad_address");
 
     /// <summary>host:port for URLs and Minecraft's --quickPlayMultiplayer (IPv6 gets brackets).</summary>
     public static string HostPort(string host, int port) => (host.Contains(':') ? $"[{host}]" : host) + ":" + port;

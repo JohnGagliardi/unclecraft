@@ -1,0 +1,7 @@
+<Project>
+  <!-- The one place the app version lives: McShared.csproj and mac/UncleCraft.Mac.csproj inherit it, and the mac
+       build scripts read it (dotnet msbuild -getProperty:Version). -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+</Project>

@@ -4,7 +4,8 @@ $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 $dist = Join-Path $here '..\dist-mac'
 $icns = Join-Path $here '..\icon\UncleCraft.icns'
-$version = '0.1.0'
+$version = "$(dotnet msbuild (Join-Path $here 'UncleCraft.Mac.csproj') -getProperty:Version)".Trim() # from ..\Directory.Build.props
+if ($LASTEXITCODE -or -not $version) { throw 'could not read the version' }
 New-Item -ItemType Directory -Force $dist | Out-Null
 foreach ($rid in 'osx-arm64', 'osx-x64') {
     $out = Join-Path $here "out\$rid"

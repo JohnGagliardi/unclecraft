@@ -126,6 +126,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
         ["fingerprint"] = HostKey() is { } k ? FormatFp(k) : _s.Fingerprint,
         ["soundOn"] = _s.SoundOn,
         ["split"] = _s.SecondPlayer,
+        ["player1"] = _s.Player1, // the classic window pre-fills its name box with it
     };
 
     private JsonNode Init()
@@ -161,8 +162,6 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
         {
             ["settings"] = SettingsJson(), ["saved"] = SavedJson(),
             ["testMode"] = st["testMode"]?.GetValue<bool>() ?? false,
-            ["free"] = st["accounts"]?["free"]?.GetValue<int>() ?? 0,
-            ["total"] = st["accounts"]?["total"]?.GetValue<int>() ?? 0,
         };
     }
 
@@ -170,9 +169,9 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
 
     /// <summary>
     /// Waits while the host's game server is waking up (it sleeps after 20 minutes with nobody playing, and logging in
-    /// wakes it). Older brokers don't report it: then this returns at once. Shared with the classic MainForm.
+    /// wakes it). Older brokers don't report it: then this returns at once.
     /// </summary>
-    internal static async Task WaitForServer(BrokerClient broker, Action<string> status, CancellationToken ct)
+    private static async Task WaitForServer(BrokerClient broker, Action<string> status, CancellationToken ct)
     {
         var deadline = DateTime.Now.AddMinutes(3);
         var told = false;
@@ -252,6 +251,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
         var choices = m["players"]!.AsArray().Select(n => ParseChoice(n!, hostKey)).ToList();
         if (choices.Count == 2 && choices[0].Name.Equals(choices[1].Name, StringComparison.OrdinalIgnoreCase))
             throw new UiError("error", "The two screens need two different people.");
+        if (choices[0] is PasswordChoice) { _s.Player1 = choices[0].Name; _s.Save(); }
 
         _busy = true;
         using var cts = new CancellationTokenSource();

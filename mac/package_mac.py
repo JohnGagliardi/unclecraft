@@ -8,26 +8,8 @@ from pathlib import Path
 
 publish, arch, icns, out_zip, version = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]), Path(sys.argv[4]), sys.argv[5]
 
-PLIST = f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleName</key><string>UncleCraft</string>
-  <key>CFBundleDisplayName</key><string>UncleCraft</string>
-  <key>CFBundleIdentifier</key><string>local.unclecraft.launcher</string>
-  <key>CFBundleExecutable</key><string>UncleCraft</string>
-  <key>CFBundleIconFile</key><string>UncleCraft.icns</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>{version}</string>
-  <key>CFBundleVersion</key><string>{version}</string>
-  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-  <key>LSMinimumSystemVersion</key><string>12.0</string>
-  <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
-  <key>NSHighResolutionCapable</key><true/>
-  <key>NSHumanReadableCopyright</key><string>UncleCraft launcher (unofficial; not affiliated with Mojang or Microsoft)</string>
-</dict>
-</plist>
-"""
+# Info.plist.template is shared with build-mac.sh; @VERSION@ comes from Directory.Build.props via the caller.
+PLIST = (Path(__file__).parent / 'Info.plist.template').read_text(encoding='utf-8').replace('@VERSION@', version)
 
 now = time.localtime()[:6]
 def add(z, name, data, mode):

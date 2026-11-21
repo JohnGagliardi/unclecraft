@@ -51,18 +51,32 @@ internal static class Installer
         if (string.Equals(Path.GetFullPath(self), Path.GetFullPath(Exe), StringComparison.OrdinalIgnoreCase)) return false;
         var update = File.Exists(Exe);
         var oldInstall = Directory.Exists(Path.Combine(Programs, "mc-shared"));
-        var answer = MessageBox.Show(update
-                ? $"{App} is already installed on this PC. Replace it with this copy?"
-                : oldInstall
-                    ? $"mc-shared is now called {App}. Update it on this PC? Your saved players and game files are kept."
-                    : $"Install {App} on this PC? It adds a Start menu and desktop shortcut. (No admin rights needed.)",
-            App, MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
-        if (answer == DialogResult.Cancel) return true;
-        if (answer == DialogResult.No) return false;
+        if (update && FileVer(self) is { } mine && FileVer(Exe) is { } installed && mine < installed)
+        {
+            if (MessageBox.Show($"This copy (v{mine.ToString(3)}) is older than the installed one (v{installed.ToString(3)}). Replace it anyway?",
+                    App, MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            {
+                Process.Start(new ProcessStartInfo(Exe) { UseShellExecute = true });
+                return true;
+            }
+        }
+        else
+        {
+            var answer = MessageBox.Show(update
+                    ? $"{App} is already installed on this PC. Replace it with this copy?"
+                    : oldInstall
+                        ? $"mc-shared is now called {App}. Update it on this PC? Your saved players and game files are kept."
+                        : $"Install {App} on this PC? It adds a Start menu and desktop shortcut. (No admin rights needed.)",
+                App, MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (answer == DialogResult.Cancel) return true;
+            if (answer == DialogResult.No) return false;
+        }
         try
         {
             Directory.CreateDirectory(Dir);
-            File.Copy(self, Exe, true);
+            // Copy beside it first, so a failed copy (disk full, antivirus) never leaves a broken exe behind the shortcuts.
+            File.Copy(self, Exe + ".new", true);
+            File.Move(Exe + ".new", Exe, true);
             var start = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
             var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
             Shortcut(Path.Combine(start, $"{App}.lnk"));
@@ -71,8 +85,9 @@ internal static class Installer
             Process.Start(new ProcessStartInfo(Exe) { UseShellExecute = true });
             return true;
         }
-        catch (IOException) when (update)
+        catch (Exception e) when (update && e is IOException or UnauthorizedAccessException) // a running exe can't be replaced
         {
+            try { File.Delete(Exe + ".new"); } catch { /* ignore */ }
             MessageBox.Show($"The installed {App} is still open, so it can't be replaced. Close it (and its games), then run this file again.", App);
             return false;
         }
@@ -81,6 +96,12 @@ internal static class Installer
             MessageBox.Show("Install failed: " + e.Message + "\nRunning from here instead.", App);
             return false;
         }
+    }
+
+    private static Version? FileVer(string exe)
+    {
+        try { var v = FileVersionInfo.GetVersionInfo(exe); return new Version(v.FileMajorPart, v.FileMinorPart, v.FileBuildPart, v.FilePrivatePart); }
+        catch { return null; }
     }
 
     /// <summary>Removes the shortcuts and program folder from when the app was called mc-shared (best effort).</summary>
@@ -109,8 +130,8 @@ internal static class WindowTiler
     [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr h, int cmd);
 
-    /// <summary>Waits for both game windows, then puts them left | right on the primary screen.</summary>
-    public static async Task TileSideBySide(Process a, Process b)
+    /// <summary>Waits for both game windows, then puts them left | right in the given working area (default: the primary screen's).</summary>
+    public static async Task TileSideBySide(Process a, Process b, Rectangle? workingArea = null)
     {
         var deadline = DateTime.Now.AddMinutes(4);
         while (DateTime.Now < deadline)
@@ -121,7 +142,7 @@ internal static class WindowTiler
             await Task.Delay(2000);
         }
         await Task.Delay(3000); // let the windows finish creating
-        var area = Screen.PrimaryScreen!.WorkingArea;
+        var area = workingArea ?? Screen.PrimaryScreen!.WorkingArea;
         var w = area.Width / 2;
         Place(a.MainWindowHandle, area.X, area.Y, w, area.Height);
         Place(b.MainWindowHandle, area.X + w, area.Y, w, area.Height);

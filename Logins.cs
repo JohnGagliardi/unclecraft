@@ -5,7 +5,11 @@ namespace McShared;
 /// <summary>Who plays: a remembered login (device token) or a name + password.</summary>
 public abstract record PlayerChoice(string Name);
 public sealed record SavedChoice(RememberedLogin Saved) : PlayerChoice(Saved.Person);
-public sealed record PasswordChoice(string Person, string Password, bool Remember) : PlayerChoice(Person);
+public sealed record PasswordChoice(string Person, string Password, bool Remember) : PlayerChoice(Person)
+{
+    // Never show the password in logs or debug output.
+    public override string ToString() => $"PasswordChoice {{ Person = {Person}, Password = ***, Remember = {Remember} }}";
+}
 /// <summary>First login with the host's invite code (normalized, 16 chars). The real name comes back from the host.</summary>
 public sealed record InviteChoice(string Code, string? NewPassword = null) : PlayerChoice("Invite " + Code[..4])
 {

@@ -9,7 +9,6 @@
     <Product>UncleCraft</Product>
     <AssemblyTitle>UncleCraft</AssemblyTitle>
     <RootNamespace>McShared</RootNamespace>
-    <Version>0.1.0</Version>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationIcon>icon\mc-shared.ico</ApplicationIcon>
     <!-- One self-contained exe: friends don't install .NET. -->
@@ -28,7 +27,7 @@
   </ItemGroup>
   <ItemGroup>
     <!-- Pixel launcher UI (WebView2). Served from the exe's resources; shots.ps1 is a dev helper and not shipped. -->
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4370.26" />
     <EmbeddedResource Include="ui\*.html;ui\*.css;ui\*.js" LogicalName="ui/%(Filename)%(Extension)" />
   </ItemGroup>
   <!-- We use the WinForms control only; drop the package's WPF assembly (avoids a WindowsBase version conflict). -->
@@ -39,7 +38,6 @@
   </Target>
   <!-- dist should hold just UncleCraft.exe -->
   <Target Name="CleanPublishXml" AfterTargets="Publish">
-    <Delete Files="@(_PublishXml)" />
     <ItemGroup><_PublishXml Include="$(PublishDir)*.xml" /></ItemGroup>
     <Delete Files="@(_PublishXml)" />
   </Target>
