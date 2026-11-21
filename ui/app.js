@@ -51,6 +51,7 @@ const ERRORS = {
   java_failed:["GAME DIDN'T START", 'Java could not start Minecraft. Try again; if it keeps happening tell the host.'],
   download_failed: ["COULDN'T DOWNLOAD THE GAME FILES", 'Check the internet and try again.'],
   bad_manifest: ["HOST'S MOD LIST IS BROKEN", "One of the host's mods has a bad file name. Tell the host."],
+  server_closed: ['SERVER CLOSED FOR THE NIGHT', 'Quiet hours: the server sleeps overnight. Come back after it reopens.'],
   update_quit_game: ['QUIT MINECRAFT FIRST', 'A new UncleCraft is ready. Quit Minecraft, then press Play again to update.'],
 };
 function friendly(err) {

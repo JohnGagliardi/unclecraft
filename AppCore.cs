@@ -278,6 +278,12 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
     /// Waits while the host's game server is waking up (it sleeps after 20 minutes with nobody playing, and logging in
     /// wakes it). Older brokers don't report it: then this returns at once.
     /// </summary>
+    /// <summary>Quiet hours on the broker (Paper never wakes then): says when it reopens, in this PC's local time.</summary>
+    private static string ClosedMessage(string? closedUntil) =>
+        DateTimeOffset.TryParse(closedUntil, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var t)
+            ? $"The server is closed for the night. It opens again at {t.ToLocalTime():t}."
+            : "The server is closed for the night. Try again in the morning.";
+
     private static async Task WaitForServer(BrokerClient broker, Action<string> status, CancellationToken ct)
     {
         var deadline = DateTime.Now.AddMinutes(3);
@@ -288,6 +294,8 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
             try { st = await broker.GetStatus(ct); }
             catch (BrokerException) { return; }
             var paper = st["paper"]?.GetValue<string>();
+            if (paper == "closed")
+                throw new UiError("server_closed", ClosedMessage(st["closedUntil"]?.GetValue<string>()));
             if (paper is null or "up")
             {
                 if (told) Log.Info("server is awake");
@@ -447,7 +455,8 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
         catch (BrokerException e)
         {
             foreach (var l in leases) _ = broker.Release(l);
-            throw new UiError(e.Code ?? "error", e.Message, current?.Name);
+            throw new UiError(e.Code ?? "error",
+                e.Code == "server_closed" ? ClosedMessage(e.Body?["closedUntil"]?.GetValue<string>()) : e.Message, current?.Name);
         }
         catch (UiError)
         {
