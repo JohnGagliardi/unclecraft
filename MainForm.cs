@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace McShared;
 
 public sealed class MainForm : Form
@@ -12,6 +10,8 @@ public sealed class MainForm : Form
     private readonly FlowLayoutPanel _saved = new() { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Margin = new Padding(0) };
     private readonly TextBox _name1 = new() { Width = 200 };
     private readonly TextBox _pass1 = new() { Width = 200, UseSystemPasswordChar = true };
+    private readonly Label _invitePassLabel = new() { Text = "New password", AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly TextBox _invitePass = new() { Width = 200, UseSystemPasswordChar = true, PlaceholderText = "optional, 10+ characters" };
     private readonly CheckBox _remember1 = new() { Text = "Remember me on this PC", AutoSize = true, Checked = true };
     private readonly Button _play = new() { Text = "Log in and play", Width = 160, Height = 34 };
     private readonly CheckBox _second = new() { Text = "Two players on this PC (split-screen)", AutoSize = true };
@@ -20,6 +20,7 @@ public sealed class MainForm : Form
     private readonly Label _status = new() { AutoSize = false, Width = 440, Height = 64 };
     private readonly Dictionary<string, (Button button, Label error)> _rows = new(StringComparer.OrdinalIgnoreCase);
     private PlayerChoice? _pendingP1; // split-screen: first pick waits for the second
+    private readonly HashSet<int> _slots = []; // player slots (games/pN) with a game running
     private int _running;
     private bool _busy;
     private bool _testMode;
@@ -49,6 +50,7 @@ public sealed class MainForm : Form
         Wide(new Label { Text = "New here? Log in with your name and password:", AutoSize = true, Margin = new Padding(3, 8, 3, 3) });
         Row("Name", _name1);
         Row("Password", _pass1);
+        t.Controls.Add(_invitePassLabel); t.Controls.Add(_invitePass); // invite code in the name box: pick your own password
         Wide(_remember1);
         Wide(_play);
         Wide(_bar);
@@ -61,11 +63,19 @@ public sealed class MainForm : Form
         _second.Checked = _s.SecondPlayer;
         _second.CheckedChanged += (_, _) => { _pendingP1 = null; _s.SecondPlayer = _second.Checked; UpdateHint(); RefreshSaved(); };
         _fingerprint.Leave += (_, _) => RefreshSaved();
+        _name1.TextChanged += (_, _) => _invitePass.Visible = _invitePassLabel.Visible = BrokerClient.NormalizeInvite(_name1.Text) != null;
+        _invitePass.Visible = _invitePassLabel.Visible = BrokerClient.NormalizeInvite(_name1.Text) != null;
         _play.Click += async (_, _) =>
         {
             if (_name1.Text.Trim().Length == 0) { Status("Enter your name and password (or an invite code in the name box), or click a saved player above."); return; }
             // Classic window: an invite code typed into the name box with an empty password redeems the invite.
-            if (_pass1.Text.Length == 0 && BrokerClient.NormalizeInvite(_name1.Text) is { } code) { await Choose(new InviteChoice(code)); return; }
+            if (_pass1.Text.Length == 0 && BrokerClient.NormalizeInvite(_name1.Text) is { } code)
+            {
+                var pw = _invitePass.Text;
+                if (pw.Length > 0 && pw.Length < 10) { Status("Your new password needs at least 10 characters (or leave it empty)."); _invitePass.Focus(); return; }
+                await Choose(new InviteChoice(code, pw.Length > 0 ? pw : null));
+                return;
+            }
             await Choose(new PasswordChoice(_name1.Text.Trim(), _pass1.Text, _remember1.Checked));
         };
         AcceptButton = _play;
@@ -157,7 +167,8 @@ public sealed class MainForm : Form
         if (_pendingP1?.Name.Equals(r.Person, StringComparison.OrdinalIgnoreCase) == true) { _pendingP1 = null; UpdateHint(); }
         RefreshSaved();
         Status($"Forgot {r.Person} on this PC.");
-        if (token != null && TryBroker(out var broker)) using (broker) await broker.ForgetDevice(token);
+        if (token != null && TryBroker(out var broker))
+            using (broker) { try { await broker.ForgetDevice(token); } catch { /* host offline: token expires anyway */ } }
     }
 
     private bool TryBroker(out BrokerClient broker)
@@ -227,13 +238,16 @@ public sealed class MainForm : Form
                 leases.Add(lease);
                 Status($"{lease.Person} gets account {lease.AccountName}.");
             }
-            _pass1.Clear();
+            _pass1.Clear(); _invitePass.Clear();
             RefreshSaved();
+
+            // the host's server sleeps when nobody plays; logging in woke it, so wait until it's ready
+            await AppCore.WaitForServer(broker, Status, CancellationToken.None);
 
             var area = Screen.PrimaryScreen!.WorkingArea;
             var started = leases.ToList();
             int? w = started.Count > 1 ? area.Width / 2 : null, h = started.Count > 1 ? area.Height : null;
-            var procs = new List<Process>();
+            var games = new List<GameProcess>();
             for (var i = 0; i < started.Count; i++)
             {
                 var lease = started[i];
@@ -241,29 +255,44 @@ public sealed class MainForm : Form
                 // Right before each launch: in interim mode this is a short-lived one-time join name.
                 Status($"Signing in {lease.Person}...");
                 var (address, conn) = await GameConnection.Open(broker, hostKey!, lease, lease.ServerHost ?? host);
-                Process proc;
+                GameProcess gp;
+                int slot;
+                lock (_slots) { slot = 1; while (_slots.Contains(slot)) slot++; _slots.Add(slot); } // lowest free games/pN
                 try
                 {
                     var token = await broker.GetMinecraftToken(lease);
                     Status($"Starting Minecraft for {lease.Person} -> {address}");
-                    proc = GameLauncher.Launch(game, i + 1, token, address, w, h).Proc;
+                    gp = GameLauncher.Launch(game, slot, token, address, w, h);
                 }
-                catch { conn?.Dispose(); throw; }
-                procs.Add(proc);
-                _ = Watch(broker, lease, proc, conn);
+                catch { conn?.Dispose(); lock (_slots) _slots.Remove(slot); throw; }
+                games.Add(gp);
+                RememberedStore.Touch(hostKey, lease.Person);
+                _ = Watch(broker, lease, gp, conn);
                 leases.Remove(lease); // now owned by Watch()
                 if (i == 0 && started.Count > 1) await Task.Delay(10_000); // stagger startup
             }
             current = null;
+            RefreshSaved();
             Status(started.Count > 1 ? "Both games are starting; they will be placed side by side." : "Minecraft is starting and will join the server.");
-            if (procs.Count == 2) await WindowTiler.TileSideBySide(procs[0], procs[1]);
+            var deadline = DateTime.Now.AddMinutes(4);
+            while (DateTime.Now < deadline)
+            {
+                var dead = games.FirstOrDefault(g => g.Proc.HasExited);
+                if (dead != null)
+                    throw new UiError("java_failed", $"Minecraft closed while starting (exit code {dead.Proc.ExitCode}). Details: {Path.Combine(Paths.GameDir(dead.Slot), "launcher-java.log")}");
+                if (games.All(g => g.WindowReady)) break;
+                await Task.Delay(1000);
+            }
+            if (games.Count == 2) await WindowTiler.TileSideBySide(games[0].Proc, games[1].Proc);
         }
         catch (Exception e)
         {
-            var msg = e is BrokerException ? e.Message : "Something went wrong: " + e.Message;
+            var msg = e is BrokerException or UiError ? e.Message : "Something went wrong: " + e.Message;
             Status(msg);
             if (e is BrokerException { Code: "app_not_approved" })
                 MessageBox.Show(e.Message + "\n\nThis is on the host's side; nothing to fix on your PC.", AppName);
+            if (e is UiError { Code: "java_failed" })
+                MessageBox.Show(e.Message, AppName); // Watch() may overwrite the status line when it gives the account back
             foreach (var l in leases) _ = broker?.Release(l); // give back accounts we took but did not use
             RefreshSaved();
             if (e is BrokerException { Code: "device_token_invalid" } && current != null)
@@ -286,11 +315,12 @@ public sealed class MainForm : Form
     }
 
     /// <summary>Keeps the lease alive while the game runs, then gives the account back.</summary>
-    private async Task Watch(BrokerClient broker, Lease lease, Process proc, IDisposable? conn)
+    private async Task Watch(BrokerClient broker, Lease lease, GameProcess gp, IDisposable? conn)
     {
         Interlocked.Increment(ref _running);
         try
         {
+            var proc = gp.Proc;
             while (!proc.HasExited)
             {
                 await Task.WhenAny(proc.WaitForExitAsync(), Task.Delay(60_000));
@@ -301,6 +331,11 @@ public sealed class MainForm : Form
             await broker.Release(lease);
             Status($"{lease.Person}'s game closed; account {lease.AccountName} is free again.");
         }
-        finally { conn?.Dispose(); Interlocked.Decrement(ref _running); }
+        catch (Exception e)
+        {
+            Log.Error("watch failed", e);
+            Status($"{lease.Person}'s game closed.");
+        }
+        finally { conn?.Dispose(); lock (_slots) _slots.Remove(gp.Slot); Interlocked.Decrement(ref _running); }
     }
 }

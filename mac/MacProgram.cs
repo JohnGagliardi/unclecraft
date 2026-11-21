@@ -1,4 +1,7 @@
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json.Nodes;
 using Photino.NET;
 
 namespace McShared;
@@ -10,6 +13,23 @@ namespace McShared;
 public static class MacProgram
 {
     private static PhotinoWindow? _window;
+
+    /// <summary>
+    /// Photino has no navigation guard or page-URL check, so a dropped or navigated-to page also gets
+    /// window.external.sendMessage. Only our index.html knows this per-launch key (served into its bridge-key meta).
+    /// </summary>
+    private static readonly string BridgeKey = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+    private const string BridgeKeyPlaceholder = "<meta name=\"bridge-key\" content=\"\">";
+
+    private static bool FromLauncherPage(string message)
+    {
+        try
+        {
+            var key = JsonNode.Parse(message)?["key"]?.GetValue<string>() ?? "";
+            return CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(key), Encoding.UTF8.GetBytes(BridgeKey));
+        }
+        catch { return false; }
+    }
 
     [STAThread]
     public static void Main()
@@ -30,7 +50,7 @@ public static class MacProgram
                 .SetContextMenuEnabled(false)
                 .SetDevToolsEnabled(false)
                 .RegisterCustomSchemeHandler("app", Serve)
-                .RegisterWebMessageReceivedHandler((_, message) => _ = core.HandleMessage(message))
+                .RegisterWebMessageReceivedHandler((_, message) => { if (FromLauncherPage(message)) _ = core.HandleMessage(message); else Log.Info("ignored a message from a page that isn't the launcher"); })
                 .RegisterWindowClosingHandler((_, _) => core.Running > 0 && !ConfirmClose())
                 .Load(new Uri("app://localhost/index.html"));
             _window.WaitForClose();
@@ -71,7 +91,10 @@ public static class MacProgram
         contentType = Path.GetExtension(path) switch { ".html" => "text/html", ".css" => "text/css", ".js" => "text/javascript", ".png" => "image/png", _ => "application/octet-stream" };
         var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("ui/" + path);
         if (stream == null) { Log.Info($"ui resource not found: {path}"); contentType = "text/plain"; return new MemoryStream("not found"u8.ToArray()); }
-        return stream;
+        if (path != "index.html") return stream;
+        using var reader = new StreamReader(stream);
+        var html = reader.ReadToEnd().Replace(BridgeKeyPlaceholder, $"<meta name=\"bridge-key\" content=\"{BridgeKey}\">");
+        return new MemoryStream(Encoding.UTF8.GetBytes(html));
     }
 
     /// <summary>macOS can't move other apps' windows without accessibility permission: size the games, don't tile.</summary>

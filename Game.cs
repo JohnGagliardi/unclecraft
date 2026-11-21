@@ -86,12 +86,20 @@ public sealed class GameInstaller(BrokerClient broker, Action<string> status, Ac
         var ver = manifest.MinecraftVersion;
 
         status($"Reading Minecraft {ver} details from Mojang...");
-        var vm = JsonNode.Parse(await Http.GetStringAsync(VersionManifest, ct))!;
-        var entry = vm["versions"]!.AsArray().FirstOrDefault(v => v!["id"]!.GetValue<string>() == ver)
-            ?? throw new Exception($"Mojang has no Minecraft version {ver}.");
         var verDir = Path.Combine(Paths.Versions, ver);
         var verJsonPath = Path.Combine(verDir, ver + ".json");
-        await Fetch(new Download(entry["url"]!.GetValue<string>(), verJsonPath, entry["sha1"]?.GetValue<string>(), -1), ct);
+        try
+        {
+            var vm = JsonNode.Parse(await Http.GetStringAsync(VersionManifest, ct))!;
+            var entry = vm["versions"]!.AsArray().FirstOrDefault(v => v!["id"]!.GetValue<string>() == ver)
+                ?? throw new Exception($"Mojang has no Minecraft version {ver}.");
+            await Fetch(new Download(entry["url"]!.GetValue<string>(), verJsonPath, entry["sha1"]?.GetValue<string>(), -1), ct);
+        }
+        catch (Exception e) when (!ct.IsCancellationRequested && File.Exists(verJsonPath))
+        {
+            // Mojang unreachable: the version details we already have are enough to play
+            Log.Info($"Mojang version manifest failed ({e.Message}); using the saved {ver}.json");
+        }
         var vj = JsonNode.Parse(await File.ReadAllTextAsync(verJsonPath, ct))!;
 
         status($"Reading Fabric {manifest.FabricLoaderVersion}...");

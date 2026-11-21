@@ -5,10 +5,12 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 
 /* ================= bridge to the C# host (or demo data for offscreen previews) ================= */
 // Windows: WebView2 (window.chrome.webview, objects). macOS: Photino/WKWebView (window.external, JSON strings).
+// macOS: every message carries the per-launch key the host put into index.html; other pages can't know it.
+const bridgeKey = document.querySelector('meta[name="bridge-key"]')?.content || '';
 const host = window.chrome && window.chrome.webview
   ? { send: (o) => window.chrome.webview.postMessage(o), listen: (fn) => window.chrome.webview.addEventListener('message', (e) => fn(e.data)) }
   : window.external && typeof window.external.sendMessage === 'function'
-    ? { send: (o) => window.external.sendMessage(JSON.stringify(o)), listen: (fn) => window.external.receiveMessage((s) => fn(typeof s === 'string' ? JSON.parse(s) : s)) }
+    ? { send: (o) => window.external.sendMessage(JSON.stringify({ ...o, key: bridgeKey })), listen: (fn) => window.external.receiveMessage((s) => fn(typeof s === 'string' ? JSON.parse(s) : s)) }
     : null;
 const demo = new URLSearchParams(location.search).get('demo');
 let nextId = 1; const pending = new Map(); const listeners = [];
@@ -33,6 +35,7 @@ const ERRORS = {
   bad_fingerprint: ['SECURITY CHECK FAILED', "The security code doesn't match this server. Open Settings and re-enter it (ask the host)."],
   bad_credentials: ['WRONG NAME OR PASSWORD', 'Check the spelling, or ask the host to reset your password.'],
   device_token_invalid: ['PLEASE LOG IN AGAIN', 'Your saved login expired or the host removed it. Enter your password once.'],
+  saved_login_locked: ["COULDN'T OPEN SAVED LOGIN", 'Your computer kept the saved login locked. Try again, and allow access if it asks (on a Mac: Keychain).'],
   no_free_account: ['ALL ACCOUNTS ARE BUSY', 'Everyone is playing! Someone needs to quit first. The server panel shows who is on.'],
   app_not_approved: ['HOST SETUP NOT FINISHED', "The host's Microsoft app isn't approved by Mojang yet. Nothing to fix on your PC."],
   test_mode_local_only: ['TEST MODE IS ON', "Right now only the host's own PC can play. Ask the host to turn test mode off."],
@@ -46,6 +49,8 @@ const ERRORS = {
   home_network_only: ['USE YOUR INVITE CODE', 'From outside the host\'s home, passwords are switched off. Ask the host for an invite code, or log in once at the host\'s home.'],
   wrong_pc:['LOG IN ON THIS PC', 'Your login was made on a different PC. Click your name again here to log in on this PC.'],
   java_failed:["GAME DIDN'T START", 'Java could not start Minecraft. Try again; if it keeps happening tell the host.'],
+  download_failed: ["COULDN'T DOWNLOAD THE GAME FILES", 'Check the internet and try again.'],
+  bad_manifest: ["HOST'S MOD LIST IS BROKEN", "One of the host's mods has a bad file name. Tell the host."],
 };
 function friendly(err) {
   const [title, hint] = ERRORS[err?.code] || ['SOMETHING WENT WRONG', 'Try again. If it keeps happening, tell the host.'];
@@ -344,6 +349,7 @@ function openLaunch(players) {
   const o = $('#launch'); o.classList.add('open');
   if (!openLaunch.sky) openLaunch.sky = startLandscape($('#launch .overlay-sky'), { px: 5, speed: 1.4 });
   $('#launchError').hidden = true;
+  $('#launchCancel').hidden = false;
   $('#stageList').replaceChildren(...STAGES.map(([k, label]) => { const li = el('li', { textContent: label }); li.dataset.k = k; return li; }));
   setTitle(players.length > 1 ? 'GET READY, BOTH!' : 'GETTING READY');
   $('#launchSub').textContent = players.length > 1 ? `${players[0].person} on the left, ${players[1].person} on the right` : `Playing as ${players[0].person}`;
@@ -382,6 +388,7 @@ function launchError(err) {
   $('#launchSub').textContent = '';
   $$('#stageList li.active').forEach((li) => (li.className = 'fail'));
   setBar(0, '');
+  $('#launchCancel').hidden = true;
   $('#errTitle').replaceChildren(pixelText(f.title, { scale: 3, color: '#ffd1d6' }));
   $('#errText').textContent = f.message && f.message !== f.title ? f.message : '';
   $('#errHint').textContent = f.hint;
@@ -403,6 +410,12 @@ function launchError(err) {
   Sound.error();
 }
 function closeLaunch() { $('#launch').classList.remove('open'); hopperAnim?.stop(); hopperAnim = null; }
+/** Back key or the CANCEL button: stops the download/sign-in/wake-up part of a launch. */
+function cancelLaunch() {
+  if (!S.busy || !$('#launch').classList.contains('open') || $('#launchCancel').hidden) return;
+  Sound.back(); setBar(null, 'Stopping…'); call('cancel').catch(() => {});
+}
+$('#launchCancel').onclick = cancelLaunch;
 
 /** Little scene: the players' avatars hop along scrolling blocks; booting = faster, done = jump for joy. */
 function startHopper(canvas, names) {
@@ -459,7 +472,7 @@ onEvent((m) => {
     case 'status': $('#launchSub').textContent = m.text; break;
     case 'phase':
       if (m.phase === 'login') { setStage('login'); setBar(null, `Signing in ${m.person}…`); }
-      if (m.phase === 'starting') { setStage('start'); setTitle('STARTING!'); setBar(null, 'Starting Java…'); }
+      if (m.phase === 'starting') { $('#launchCancel').hidden = true; setStage('start'); setTitle('STARTING!'); setBar(null, 'Starting Java…'); }
       if (m.phase === 'booting') { setStage('start'); setTitle('BOOTING MINECRAFT'); hopperAnim?.boot(); setBar(null, 'The game window will open in a moment…'); }
       if (m.phase === 'ingame') {
         setStage('done-all'); $$('#stageList li').forEach((li) => (li.className = 'done'));
@@ -501,7 +514,7 @@ async function boot() {
     const m = $('.modal.open'); if (m) { closeModal(m); Sound.back(); return; }
     if ($('#setup').classList.contains('open') && S.settings.server) { $('#setup').classList.remove('open'); return; }
     if (!$('#launchError').hidden) closeLaunch();
-    else if (S.busy && $('#launch').classList.contains('open')) { Sound.back(); setBar(null, 'Stopping…'); call('cancel').catch(() => {}); }
+    else cancelLaunch();
   });
   const r = await call('init');
   S.settings = r.settings; S.saved = r.saved; Sound.on = r.settings.soundOn !== false;

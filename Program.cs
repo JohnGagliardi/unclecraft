@@ -9,8 +9,25 @@ internal static class Program
     [STAThread]
     private static void Main()
     {
+        // Crashes go to launcher.log with a short friendly message instead of the raw .NET dialog.
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        Application.ThreadException += (_, e) =>
+        {
+            Log.Error("unhandled UI exception", e.Exception);
+            MessageBox.Show("Something went wrong. The details are in launcher.log.", Installer.App);
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => Log.Error("unhandled exception", e.ExceptionObject as Exception);
+        TaskScheduler.UnobservedTaskException += (_, e) => { Log.Error("unobserved task exception", e.Exception); e.SetObserved(); };
         ApplicationConfiguration.Initialize();
         if (Installer.OfferInstall()) return;
+        // One copy at a time (two would share game folders). Taken after the install step: the installer starts the
+        // installed copy and exits without ever holding it.
+        using var single = new Mutex(true, $@"Local\UncleCraft-{Environment.UserName}", out var first);
+        if (!first)
+        {
+            MessageBox.Show("UncleCraft is already open.", Installer.App);
+            return;
+        }
         // The pixel launcher needs the WebView2 runtime (built into Windows 11); without it, use the classic window.
         if (WebUiForm.RuntimeAvailable()) Application.Run(new WebUiForm());
         else Application.Run(new MainForm());
@@ -25,7 +42,7 @@ internal static class Installer
     private static readonly string Programs = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs");
     private static readonly string Dir = Path.Combine(Programs, "UncleCraft");
     private static string Exe => Path.Combine(Dir, "UncleCraft.exe");
-    private const string App = MainForm.AppName;
+    public const string App = MainForm.AppName;
 
     /// <summary>Returns true if the installed copy was started instead (caller should exit).</summary>
     public static bool OfferInstall()
@@ -56,7 +73,7 @@ internal static class Installer
         }
         catch (IOException) when (update)
         {
-            MessageBox.Show($"The installed {App} is still open, so it can't be replaced. Close it (and its games), then run this file again.\n\nRunning from here for now.", App);
+            MessageBox.Show($"The installed {App} is still open, so it can't be replaced. Close it (and its games), then run this file again.", App);
             return false;
         }
         catch (Exception e)

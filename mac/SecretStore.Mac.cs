@@ -11,6 +11,7 @@ public static class SecretStore
 {
     private const string Service = "UncleCraft";
     private const string Prefix = "keychain:";
+    private const int ItemNotFound = 44; // errSecItemNotFound, as `security` reports it
 
     public static string Protect(string token)
     {
@@ -22,10 +23,11 @@ public static class SecretStore
         return Prefix + account;
     }
 
+    /// <summary>KeyNotFoundException / FormatException = definitely gone or corrupt; anything else (Deny, cancelled unlock, timeout) may work next time.</summary>
     public static string Unprotect(string stored)
     {
-        if (!stored.StartsWith(Prefix)) throw new InvalidOperationException("not a Keychain reference");
-        return Read(stored[Prefix.Length..]) ?? throw new InvalidOperationException("saved login missing from Keychain");
+        if (!stored.StartsWith(Prefix)) throw new FormatException("not a Keychain reference");
+        return Read(stored[Prefix.Length..]) ?? throw new KeyNotFoundException("saved login missing from Keychain");
     }
 
     public static void Delete(string stored)
@@ -34,10 +36,13 @@ public static class SecretStore
         try { Run(["delete-generic-password", "-a", stored[Prefix.Length..], "-s", Service], null); } catch { /* already gone */ }
     }
 
+    /// <summary>The token, or null if the item doesn't exist. Throws for any other failure.</summary>
     private static string? Read(string account)
     {
         var (code, output) = Run(["find-generic-password", "-a", account, "-s", Service, "-w"], null);
-        return code == 0 ? output.Trim() : null;
+        if (code == ItemNotFound) return null;
+        if (code != 0) throw new InvalidOperationException($"Keychain read failed (security exit code {code})");
+        return output.Trim();
     }
 
     private static (int code, string stdout) Run(string[] args, string? stdin)
@@ -48,10 +53,16 @@ public static class SecretStore
         };
         foreach (var a in args) psi.ArgumentList.Add(a);
         using var p = Process.Start(psi)!;
+        var output = p.StandardOutput.ReadToEndAsync();
+        var errors = p.StandardError.ReadToEndAsync();
         if (stdin != null) { p.StandardInput.Write(stdin); p.StandardInput.Close(); }
-        var output = p.StandardOutput.ReadToEnd();
-        p.StandardError.ReadToEnd();
-        p.WaitForExit(15_000);
-        return (p.ExitCode, output);
+        if (!p.WaitForExit(15_000))
+        {
+            try { p.Kill(entireProcessTree: true); } catch { /* exited meanwhile */ }
+            throw new TimeoutException("security did not finish within 15 seconds");
+        }
+        p.WaitForExit(); // let the output readers finish
+        errors.GetAwaiter().GetResult();
+        return (p.ExitCode, output.GetAwaiter().GetResult());
     }
 }

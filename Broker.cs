@@ -108,13 +108,28 @@ public sealed class BrokerClient : IDisposable
     {
         var j = await Send(HttpMethod.Get, "/api/v1/client/manifest", ct: ct);
         var mods = j["mods"]!.AsArray().Select(m => new ModInfo(m!["file"]!.GetValue<string>(), m["size"]!.GetValue<long>(), m["sha256"]!.GetValue<string>())).ToList();
+        foreach (var m in mods)
+            if (!SafeModName(m.File)) throw new BrokerException($"The host's mod list has a bad file name: {m.File}. Tell the host.", "bad_manifest");
         return new ClientManifest(j["minecraftVersion"]!.GetValue<string>(), j["fabricLoaderVersion"]!.GetValue<string>(), mods,
             j["testMode"]?.GetValue<bool>() ?? false);
     }
 
+    /// <summary>A mod name is a plain "x.jar" file name: no folders, no "..", nothing that could land outside the mods folder.</summary>
+    private static bool SafeModName(string f) =>
+        f.Length > 4 && f != "." && f != ".." && Path.GetFileName(f) == f && !f.Contains('/') && !f.Contains('\\')
+        && f.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && f.EndsWith(".jar", StringComparison.OrdinalIgnoreCase);
+
     public async Task DownloadMod(ModInfo mod, string dest, CancellationToken ct = default)
     {
-        using var res = await _http.GetAsync("/api/v1/client/mods/" + Uri.EscapeDataString(mod.File), HttpCompletionOption.ResponseHeadersRead, ct);
+        HttpResponseMessage sent;
+        try { sent = await _http.GetAsync("/api/v1/client/mods/" + Uri.EscapeDataString(mod.File), HttpCompletionOption.ResponseHeadersRead, ct); }
+        catch (HttpRequestException e) when (e.InnerException is System.Security.Authentication.AuthenticationException)
+        { throw new BrokerException("The server's certificate does not match the fingerprint you entered. Check it with the host.", "bad_fingerprint"); }
+        catch (HttpRequestException e)
+        { throw new BrokerException($"Can't reach the host's server at {Host} to download mod {mod.File} ({e.Message}).", "unreachable"); }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        { throw new BrokerException($"The host's server at {Host} did not answer in time.", "timeout"); }
+        using var res = sent;
         if (res.StatusCode != HttpStatusCode.OK) throw new BrokerException($"Could not download mod {mod.File} from the host (HTTP {(int)res.StatusCode}).");
         var tmp = dest + ".tmp";
         try

@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+
 namespace McShared;
 
 /// <summary>Who plays: a remembered login (device token) or a name + password.</summary>
@@ -24,10 +26,15 @@ public static class Logins
             {
                 string token;
                 try { token = RememberedStore.Token(sc.Saved); }
-                catch
+                catch (Exception e) when (e is CryptographicException or FormatException or KeyNotFoundException) // corrupt or gone for good
                 {
                     RememberedStore.Remove(hostKey, sc.Saved.Person);
-                    throw new BrokerException($"{sc.Saved.Person}'s saved login can't be read on this Windows account. Log in again.", "device_token_invalid");
+                    throw new BrokerException($"{sc.Saved.Person}'s saved login can't be read on this computer. Log in again.", "device_token_invalid");
+                }
+                catch (Exception e) // e.g. Keychain access denied or unlock cancelled: keep it, it may work next time
+                {
+                    Log.Error($"could not open the saved login for {sc.Saved.Person}", e);
+                    throw new BrokerException($"Couldn't open {sc.Saved.Person}'s saved login. Try again.", "saved_login_locked");
                 }
                 try
                 {

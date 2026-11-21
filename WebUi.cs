@@ -75,7 +75,7 @@ public sealed class WebUiForm : Form, IGameWindows
         core.WebResourceRequested += ServeResource;
         core.NavigationStarting += (_, e) => { if (!e.Uri.StartsWith(Origin, StringComparison.OrdinalIgnoreCase)) e.Cancel = true; };
         core.NewWindowRequested += (_, e) => e.Handled = true;
-        core.WebMessageReceived += async (_, e) => await _core.HandleMessage(e.WebMessageAsJson);
+        core.WebMessageReceived += async (_, e) => { if (e.Source.StartsWith(Origin, StringComparison.OrdinalIgnoreCase)) await _core.HandleMessage(e.WebMessageAsJson); };
         core.Navigate(Origin + "index.html");
     }
 

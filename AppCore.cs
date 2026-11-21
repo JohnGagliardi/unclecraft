@@ -28,6 +28,8 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
     private readonly Settings _s = Settings.Load();
     private BrokerClient? _broker;
     private string? _brokerKey;
+    private readonly List<BrokerClient> _retired = [];
+    private readonly HashSet<int> _slots = []; // player slots (games/pN) with a game running
     private bool _busy;
     private CancellationTokenSource? _playCts;
     private int _running;
@@ -89,8 +91,23 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
         var (host, port) = Address();
         if (key == null || host.Length == 0) throw new UiError("not_configured", "Enter the host's address and security code first.");
         var id = $"{host}:{port}/{key}";
-        if (_broker == null || _brokerKey != id) { _broker?.Dispose(); _broker = new BrokerClient(host, port, key); _brokerKey = id; }
+        if (_broker == null || _brokerKey != id)
+        {
+            if (_broker != null) { lock (_retired) _retired.Add(_broker); DisposeRetired(); }
+            _broker = new BrokerClient(host, port, key); _brokerKey = id;
+        }
         return _broker;
+    }
+
+    /// <summary>Replaced clients may still be in use by Play/Watch (heartbeats, Release): dispose them only once nothing runs.</summary>
+    private void DisposeRetired()
+    {
+        lock (_retired)
+        {
+            if (_busy || Volatile.Read(ref _running) > 0) return;
+            foreach (var b in _retired) b.Dispose();
+            _retired.Clear();
+        }
     }
 
     private JsonArray SavedJson()
@@ -138,8 +155,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
         try { addr = BrokerClient.ParseAddress(server, _s.Port); } catch { throw new UiError("error", "That address doesn't look right. Use an IP like 192.168.1.20 or a name like uncle.example.org."); }
         using var probe = new BrokerClient(addr.host, addr.port, key);
         var st = await probe.GetStatus();
-        _s.Server = server; _s.Fingerprint = FormatFp(key); _s.Save();
-        _brokerKey = null;
+        _s.Server = server; _s.Fingerprint = FormatFp(key); _s.Save(); // Broker() makes a new client only if host/key changed
         Log.Info($"setup ok: host {addr.host}:{addr.port}, mode {st["mode"]}");
         return new JsonObject
         {
@@ -154,16 +170,16 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
 
     /// <summary>
     /// Waits while the host's game server is waking up (it sleeps after 20 minutes with nobody playing, and logging in
-    /// wakes it). Older brokers don't report it: then this returns at once.
+    /// wakes it). Older brokers don't report it: then this returns at once. Shared with the classic MainForm.
     /// </summary>
-    private async Task WaitForServer(BrokerClient broker)
+    internal static async Task WaitForServer(BrokerClient broker, Action<string> status, CancellationToken ct)
     {
         var deadline = DateTime.Now.AddMinutes(3);
         var told = false;
         while (true)
         {
             JsonNode st;
-            try { st = await broker.GetStatus(); }
+            try { st = await broker.GetStatus(ct); }
             catch (BrokerException) { return; }
             var paper = st["paper"]?.GetValue<string>();
             if (paper is null or "up")
@@ -174,12 +190,12 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
             if (!told)
             {
                 Log.Info($"server is {paper}: waiting for it to wake up");
-                Event("status", new JsonObject { ["text"] = "Waking up the server. This takes about 30 seconds..." });
+                status("Waking up the server. This takes about 30 seconds...");
                 told = true;
             }
             if (DateTime.Now > deadline)
                 throw new UiError("server_asleep", "The server didn't wake up in time. Try again in a minute, or ask the host.");
-            await Task.Delay(2000);
+            await Task.Delay(2000, ct);
         }
     }
 
@@ -265,7 +281,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
             Event("saved", new JsonObject { ["saved"] = SavedJson() });
 
             // the host's server sleeps when nobody plays; logging in woke it, so wait until it's ready
-            await WaitForServer(broker);
+            await WaitForServer(broker, text => Event("status", new JsonObject { ["text"] = text }), cts.Token);
             cts.Token.ThrowIfCancellationRequested(); // last point Back can stop it: after this games start
             _playCts = null;
 
@@ -280,13 +296,15 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
                 // The game connection: through the encrypted tunnel when the host offers it, else straight to Paper.
                 var (address, conn) = await GameConnection.Open(broker, hostKey, lease, lease.ServerHost ?? Address().host);
                 GameProcess gp;
+                int slot;
+                lock (_slots) { slot = 1; while (_slots.Contains(slot)) slot++; _slots.Add(slot); } // lowest free games/pN
                 try
                 {
                     // Fetched right before each launch: in interim mode this is a short-lived one-time join name.
                     var token = await broker.GetMinecraftToken(lease);
-                    gp = GameLauncher.Launch(game, i + 1, token, address, size?.width, size?.height);
+                    gp = GameLauncher.Launch(game, slot, token, address, size?.width, size?.height);
                 }
-                catch { conn?.Dispose(); throw; }
+                catch { conn?.Dispose(); lock (_slots) _slots.Remove(slot); throw; }
                 games.Add(gp);
                 RememberedStore.Touch(hostKey, lease.Person);
                 _ = Watch(broker, lease, gp, conn);
@@ -329,9 +347,17 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
         {
             Log.Error("play failed", e);
             foreach (var l in leases) _ = broker.Release(l);
-            throw new UiError("error", e.Message, current?.Name);
+            // the real message is in the log; the page gets kid-friendly wording
+            throw e switch
+            {
+                HttpRequestException or TimeoutException or TaskCanceledException =>
+                    new UiError("download_failed", "Couldn't download the game files. Check the internet and try again.", current?.Name),
+                IOException or System.Text.Json.JsonException =>
+                    new UiError("download_failed", "Some game files are broken or in use. Close Minecraft if it's open and try again.", current?.Name),
+                _ => new UiError("error", "Something went wrong starting the game. Try again; if it keeps happening, tell the host.", current?.Name),
+            };
         }
-        finally { _playCts = null; _busy = false; }
+        finally { _playCts = null; _busy = false; DisposeRetired(); }
     }
 
     /// <summary>Back on the launch screen: stops the download/sign-in part of Play. Once games start it does nothing.</summary>
@@ -359,6 +385,12 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
             Event("closed", new JsonObject { ["person"] = lease.Person, ["account"] = lease.AccountName });
         }
         catch (Exception e) { Log.Error("watch failed", e); }
-        finally { conn?.Dispose(); Interlocked.Decrement(ref _running); }
+        finally
+        {
+            conn?.Dispose();
+            lock (_slots) _slots.Remove(gp.Slot);
+            Interlocked.Decrement(ref _running);
+            DisposeRetired();
+        }
     }
 }
