@@ -14,7 +14,7 @@ public sealed class BrokerException(string message, string? code = null, JsonNod
 }
 
 public sealed record Lease(string LeaseToken, string Person, string AccountName, string? ServerHost, int ServerPort, bool ServerSignin,
-    string? DeviceToken = null, string? DeviceId = null);
+    string? DeviceToken = null, string? DeviceId = null, TunnelInfo? Tunnel = null);
 public sealed record McToken(string Username, string Uuid, string AccessToken);
 public sealed record ModInfo(string File, long Size, string Sha256);
 public sealed record ClientManifest(string MinecraftVersion, string FabricLoaderVersion, List<ModInfo> Mods, bool TestMode);
@@ -24,20 +24,20 @@ public sealed class BrokerClient : IDisposable
 {
     private readonly HttpClient _http;
     public string Host { get; }
+    public int Port { get; }
+
+    /// <summary>Trusts exactly the certificate whose SHA-256 is the pinned fingerprint (API calls and the game tunnel).</summary>
+    public static RemoteCertificateValidationCallback PinCheck(string pinHex) => (_, cert, _, _) =>
+        cert != null && CryptographicOperations.FixedTimeEquals(Convert.FromHexString(pinHex), SHA256.HashData(cert.GetRawCertData()));
 
     public BrokerClient(string host, int port, string fingerprint)
     {
         Host = host;
+        Port = port;
         var pin = NormalizeFingerprint(fingerprint);
         var handler = new SocketsHttpHandler
         {
-            SslOptions = new SslClientAuthenticationOptions
-            {
-                RemoteCertificateValidationCallback = (_, cert, _, _) =>
-                    cert != null && CryptographicOperations.FixedTimeEquals(
-                        Convert.FromHexString(pin),
-                        SHA256.HashData(cert.GetRawCertData())),
-            },
+            SslOptions = new SslClientAuthenticationOptions { RemoteCertificateValidationCallback = PinCheck(pin) },
             ConnectTimeout = TimeSpan.FromSeconds(5),
         };
         _http = new HttpClient(handler) { BaseAddress = new Uri($"https://{HostPort(host, port)}"), Timeout = TimeSpan.FromSeconds(60) };
@@ -164,7 +164,9 @@ public sealed class BrokerClient : IDisposable
         j["server"]?["port"]?.GetValue<int>() ?? 25570,
         j["minecraftToken"]?["available"]?.GetValue<bool>() ?? false,
         j["deviceToken"]?.GetValue<string>(),
-        j["deviceId"]?.GetValue<string>());
+        j["deviceId"]?.GetValue<string>(),
+        j["tunnel"]?["alpn"]?.GetValue<string>() is { Length: > 0 } alpn
+            ? new TunnelInfo(alpn, j["tunnel"]?["voicePort"]?.GetValue<int>() ?? 24454) : null);
 
     public async Task<McToken> GetMinecraftToken(Lease lease, CancellationToken ct = default)
     {

@@ -71,7 +71,7 @@ public sealed class MainForm : Form
         AcceptButton = _play;
         FormClosing += (_, e) =>
         {
-            if (_running > 0 && MessageBox.Show("Minecraft is still running. If you close this window the host's server frees your account a few minutes after you quit.\n\nClose anyway?",
+            if (_running > 0 && MessageBox.Show("Minecraft is still running. Closing this window also disconnects you from the server (the game connection runs through UncleCraft).\n\nClose anyway?",
                     AppName, MessageBoxButtons.YesNo) == DialogResult.No) e.Cancel = true;
         };
         UpdateHint();
@@ -240,12 +240,17 @@ public sealed class MainForm : Form
                 current = players[i];
                 // Right before each launch: in interim mode this is a short-lived one-time join name.
                 Status($"Signing in {lease.Person}...");
-                var token = await broker.GetMinecraftToken(lease);
-                var address = BrokerClient.HostPort(lease.ServerHost ?? host, lease.ServerPort);
-                Status($"Starting Minecraft for {lease.Person} -> {address}");
-                var proc = GameLauncher.Launch(game, i + 1, token, address, w, h).Proc;
+                var (address, conn) = await GameConnection.Open(broker, hostKey!, lease, lease.ServerHost ?? host);
+                Process proc;
+                try
+                {
+                    var token = await broker.GetMinecraftToken(lease);
+                    Status($"Starting Minecraft for {lease.Person} -> {address}");
+                    proc = GameLauncher.Launch(game, i + 1, token, address, w, h).Proc;
+                }
+                catch { conn?.Dispose(); throw; }
                 procs.Add(proc);
-                _ = Watch(broker, lease, proc);
+                _ = Watch(broker, lease, proc, conn);
                 leases.Remove(lease); // now owned by Watch()
                 if (i == 0 && started.Count > 1) await Task.Delay(10_000); // stagger startup
             }
@@ -281,7 +286,7 @@ public sealed class MainForm : Form
     }
 
     /// <summary>Keeps the lease alive while the game runs, then gives the account back.</summary>
-    private async Task Watch(BrokerClient broker, Lease lease, Process proc)
+    private async Task Watch(BrokerClient broker, Lease lease, Process proc, IDisposable? conn)
     {
         Interlocked.Increment(ref _running);
         try
@@ -291,10 +296,11 @@ public sealed class MainForm : Form
                 await Task.WhenAny(proc.WaitForExitAsync(), Task.Delay(60_000));
                 if (!proc.HasExited) { try { await broker.Heartbeat(lease); } catch { /* server keeps the lease while the plugin sees us online */ } }
             }
+            conn?.Dispose();
             Status($"{lease.Person}'s game closed (exit code {proc.ExitCode}). Giving the account back...");
             await broker.Release(lease);
             Status($"{lease.Person}'s game closed; account {lease.AccountName} is free again.");
         }
-        finally { Interlocked.Decrement(ref _running); }
+        finally { conn?.Dispose(); Interlocked.Decrement(ref _running); }
     }
 }

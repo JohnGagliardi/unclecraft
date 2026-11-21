@@ -49,7 +49,7 @@ public static class MacProgram
         try
         {
             var r = _window!.ShowMessage(Platform.AppName,
-                "Minecraft is still running. If you close UncleCraft, the host's server frees your account a few minutes after you quit.\n\nClose anyway?",
+                "Minecraft is still running. Closing UncleCraft also disconnects you from the server (the game connection runs through UncleCraft).\n\nClose anyway?",
                 PhotinoDialogButtons.YesNo, PhotinoDialogIcon.Question);
             return r == PhotinoDialogResult.Yes;
         }

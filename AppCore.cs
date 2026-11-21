@@ -236,12 +236,19 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
             {
                 var lease = started[i];
                 current = choices[i];
-                // Fetched right before each launch: in interim mode this is a short-lived one-time join name.
-                var token = await broker.GetMinecraftToken(lease);
-                var gp = GameLauncher.Launch(game, i + 1, token, BrokerClient.HostPort(lease.ServerHost ?? Address().host, lease.ServerPort), size?.width, size?.height);
+                // The game connection: through the encrypted tunnel when the host offers it, else straight to Paper.
+                var (address, conn) = await GameConnection.Open(broker, hostKey, lease, lease.ServerHost ?? Address().host);
+                GameProcess gp;
+                try
+                {
+                    // Fetched right before each launch: in interim mode this is a short-lived one-time join name.
+                    var token = await broker.GetMinecraftToken(lease);
+                    gp = GameLauncher.Launch(game, i + 1, token, address, size?.width, size?.height);
+                }
+                catch { conn?.Dispose(); throw; }
                 games.Add(gp);
                 RememberedStore.Touch(hostKey, lease.Person);
-                _ = Watch(broker, lease, gp);
+                _ = Watch(broker, lease, gp, conn);
                 leases.Remove(lease); // owned by Watch() now
                 if (i == 0 && started.Count > 1) await Task.Delay(10_000); // stagger startup
             }
@@ -282,7 +289,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
     }
 
     /// <summary>Keeps the lease alive while the game runs, then gives the account back.</summary>
-    private async Task Watch(BrokerClient broker, Lease lease, GameProcess gp)
+    private async Task Watch(BrokerClient broker, Lease lease, GameProcess gp, IDisposable? conn)
     {
         Interlocked.Increment(ref _running);
         try
@@ -293,11 +300,12 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
                 await Task.WhenAny(proc.WaitForExitAsync(), Task.Delay(60_000));
                 if (!proc.HasExited) { try { await broker.Heartbeat(lease); } catch { /* server keeps the lease while the plugin sees us online */ } }
             }
+            conn?.Dispose();
             await broker.Release(lease);
             Log.Info($"{lease.Person}'s game closed; lease released");
             Event("closed", new JsonObject { ["person"] = lease.Person, ["account"] = lease.AccountName });
         }
         catch (Exception e) { Log.Error("watch failed", e); }
-        finally { Interlocked.Decrement(ref _running); }
+        finally { conn?.Dispose(); Interlocked.Decrement(ref _running); }
     }
 }

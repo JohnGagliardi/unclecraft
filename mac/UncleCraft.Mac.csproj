@@ -18,7 +18,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- shared with the Windows build -->
-    <Compile Include="..\AppCore.cs;..\Broker.cs;..\Game.cs;..\Log.cs;..\Logins.cs;..\Platform.cs;..\Remembered.cs;..\Settings.cs" />
+    <Compile Include="..\AppCore.cs;..\Broker.cs;..\Game.cs;..\Log.cs;..\Logins.cs;..\Platform.cs;..\Remembered.cs;..\Settings.cs;..\Tunnel.cs" />
     <EmbeddedResource Include="..\ui\*.html;..\ui\*.css;..\ui\*.js" LogicalName="ui/%(Filename)%(Extension)" />
     <PackageReference Include="Photino.NET" Version="4.0.16" />
   </ItemGroup>
