@@ -150,6 +150,37 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
 
     private async Task<JsonNode> Status() => await Broker().GetStatus();
 
+    /// <summary>
+    /// Waits while the host's game server is waking up (it sleeps after 20 minutes with nobody playing, and logging in
+    /// wakes it). Older brokers don't report it: then this returns at once.
+    /// </summary>
+    private async Task WaitForServer(BrokerClient broker)
+    {
+        var deadline = DateTime.Now.AddMinutes(3);
+        var told = false;
+        while (true)
+        {
+            JsonNode st;
+            try { st = await broker.GetStatus(); }
+            catch (BrokerException) { return; }
+            var paper = st["paper"]?.GetValue<string>();
+            if (paper is null or "up")
+            {
+                if (told) Log.Info("server is awake");
+                return;
+            }
+            if (!told)
+            {
+                Log.Info($"server is {paper}: waiting for it to wake up");
+                Event("status", new JsonObject { ["text"] = "Waking up the server. This takes about 30 seconds..." });
+                told = true;
+            }
+            if (DateTime.Now > deadline)
+                throw new UiError("server_asleep", "The server didn't wake up in time. Try again in a minute, or ask the host.");
+            await Task.Delay(2000);
+        }
+    }
+
     private JsonNode? SetSound(JsonObject m) { _s.SoundOn = m["on"]?.GetValue<bool>() ?? true; _s.Save(); return null; }
     private JsonNode? SetMode(JsonObject m) { _s.SecondPlayer = m["split"]?.GetValue<bool>() ?? false; _s.Save(); return null; }
 
@@ -227,6 +258,9 @@ public sealed class AppCore(Action<string> post, IGameWindows windows)
                 Log.Info($"lease: {lease.Person} on {lease.AccountName}");
             }
             Event("saved", new JsonObject { ["saved"] = SavedJson() });
+
+            // the host's server sleeps when nobody plays; logging in woke it, so wait until it's ready
+            await WaitForServer(broker);
 
             Event("phase", new JsonObject { ["phase"] = "starting" });
             var size = leases.Count > 1 ? windows.SplitSize() : null;
