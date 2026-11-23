@@ -52,7 +52,20 @@ without the IP.
 
 ## In progress
 
-Nothing.
+- **Microsoft sign-in + guests (Track A): built, not committed, not tried against a broker.** Spec:
+  `REAL-ACCOUNTS-PLAN.md` (API contract). Shown only when the broker's `GET /status` lists `features`
+  `"microsoft"` / `"guests"`, so an older broker looks as before.
+  - `Broker.cs`: `MicrosoftStart` (optional bearer lease = link), `MicrosoftPoll`, `GuestSession`, `Features()`;
+    `Lease` gains `MicrosoftLinked` and `GuestOf`.
+  - `AppCore.cs`: bridge `msStart`, `msOpen` (opens only https microsoft.com/live.com), `msPoll` (loop, 429 waits
+    `retryAfterSeconds`), `msCancel`; events `msWait` and `linkOffer` (once per person and host, in
+    `Settings.MicrosoftLinkAsked`); player choice `{kind:"guest"}` after player 1. `features` in init/setup.
+  - `Remembered.cs`: `Linked` per saved person (from each login answer). Microsoft device tokens are saved like invite
+    ones.
+  - UI: Microsoft button on New player, the code screen, the link offer, the "Guest of <P1>" card. Demos:
+    `?demo=microsoft`, `mserror`, `link`, `guest`, `guest2`.
+  - Classic window: "Sign in with Microsoft" button and a "Player 2: guest" checkbox.
+  - To try: a broker with the new endpoints on test ports, then sign in, link, and run a guest split-screen.
 
 ## Next
 

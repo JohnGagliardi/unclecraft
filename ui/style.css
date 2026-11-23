@@ -156,6 +156,20 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--lime); }
 .login-tabs button { flex: 1; font-size: 12px; }
 .login-tabs button[aria-selected="true"] { background: var(--sky); color: var(--ink); box-shadow: var(--bevel); }
 .invite-input { font-family: Consolas, monospace; font-size: 20px !important; letter-spacing: .12em; text-align: center; text-transform: uppercase; }
+.btn.ms { background: var(--sky); color: var(--ink); }
+.ms-choice { display: grid; gap: 8px; }
+.ms-choice .btn { font-size: 16px; padding: 13px 20px; }
+.ms-card { width: min(480px, 92vw); text-align: center; }
+.ms-title { display: flex; justify-content: center; }
+#msBody { display: grid; gap: 12px; }
+#msBody p { margin: 0; }
+.ms-code { font-family: Consolas, monospace; font-size: 44px; font-weight: 900; letter-spacing: .14em; color: var(--yellow); background: var(--ink); padding: 14px 10px; clip-path: var(--cut); user-select: text; }
+.ms-open { font-size: 16px; padding: 14px 20px; }
+.ms-wait { display: flex; align-items: center; justify-content: center; gap: 10px; font-weight: 700; }
+.spinner { width: 16px; height: 16px; background: var(--sky); animation: spin 1s steps(4) infinite; }
+@keyframes spin { to { transform: rotate(360deg) } }
+.card.guest { background: #2a3d5e; box-shadow: var(--bevel), inset 0 0 0 3px var(--sky); }
+.card.guest .tag { position: absolute; top: 10px; left: 10px; background: var(--sky); color: var(--ink); font-weight: 900; font-size: 11px; padding: 2px 7px; clip-path: var(--cut); }
 .wizard { width: min(560px, 92vw); padding: 26px 30px 24px; }
 .wizard p { margin: 0; }
 .step { display: none; gap: 12px; } .step.active { display: grid; animation: rise .2s ease-out; }

@@ -14,7 +14,8 @@ public sealed class BrokerException(string message, string? code = null, JsonNod
 }
 
 public sealed record Lease(string LeaseToken, string Person, string AccountName, string? ServerHost, int ServerPort, bool ServerSignin,
-    string? DeviceToken = null, string? DeviceId = null, TunnelInfo? Tunnel = null);
+    string? DeviceToken = null, string? DeviceId = null, TunnelInfo? Tunnel = null,
+    bool? MicrosoftLinked = null, string? GuestOf = null);
 public sealed record McToken(string Username, string Uuid, string AccessToken);
 public sealed record ModInfo(string File, long Size, string Sha256);
 public sealed record ClientManifest(string MinecraftVersion, string FabricLoaderVersion, List<ModInfo> Mods, bool TestMode);
@@ -198,7 +199,28 @@ public sealed class BrokerClient : IDisposable
         j["deviceToken"]?.GetValue<string>(),
         j["deviceId"]?.GetValue<string>(),
         j["tunnel"]?["alpn"]?.GetValue<string>() is { Length: > 0 } alpn
-            ? new TunnelInfo(alpn, j["tunnel"]?["voicePort"]?.GetValue<int>() ?? 24454) : null);
+            ? new TunnelInfo(alpn, j["tunnel"]?["voicePort"]?.GetValue<int>() ?? 24454) : null,
+        j["microsoft"]?["linked"]?.GetValue<bool>(), // null: a broker without Microsoft sign-in
+        j["guestOf"]?.GetValue<string>());
+
+    /// <summary>
+    /// Starts a Microsoft device-code sign-in on the broker: {flowId, userCode, verificationUri, expiresIn, interval}.
+    /// With a lease token it links the Microsoft account to that signed-in person instead.
+    /// </summary>
+    public Task<JsonNode> MicrosoftStart(string? leaseToken = null, CancellationToken ct = default) =>
+        Send(HttpMethod.Post, "/api/v1/microsoft/start", new { deviceLabel = Environment.MachineName }, leaseToken, ct);
+
+    /// <summary>One poll: 202 {state:"pending"}, or 200 {state:"done", person, gamertag, deviceToken, deviceId | linked}. Errors throw.</summary>
+    public Task<JsonNode> MicrosoftPoll(string flowId, CancellationToken ct = default) =>
+        Send(HttpMethod.Post, "/api/v1/microsoft/poll", new { flowId }, ct: ct);
+
+    /// <summary>A split-screen guest seat for player 1 (needs player 1's lease). The answer is a normal lease, never with a device token.</summary>
+    public async Task<Lease> GuestSession(Lease player1, CancellationToken ct = default) =>
+        ToLease(await Send(HttpMethod.Post, "/api/v1/sessions/guest", new { }, player1.LeaseToken, ct));
+
+    /// <summary>The optional features a broker lists in GET /status ("microsoft", "guests"); none on older brokers.</summary>
+    public static HashSet<string> Features(JsonNode? status) =>
+        status?["features"] is JsonArray a ? a.Select(f => f?.GetValueKind() == System.Text.Json.JsonValueKind.String ? f.GetValue<string>() : null).OfType<string>().ToHashSet() : [];
 
     public async Task<McToken> GetMinecraftToken(Lease lease, CancellationToken ct = default)
     {

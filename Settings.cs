@@ -11,6 +11,8 @@ public sealed class Settings
     public string Player2 { get; set; } = "";
     public bool SecondPlayer { get; set; }
     public bool SoundOn { get; set; } = true;
+    /// <summary>"hostKey/person" for each person already offered "Link your Microsoft account" (asked once).</summary>
+    public List<string> MicrosoftLinkAsked { get; set; } = [];
 
     // Only these fields are stored here. Passwords and Minecraft tokens never touch the disk;
     // remembered logins live DPAPI-encrypted in remembered.json (see RememberedStore).

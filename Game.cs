@@ -8,7 +8,9 @@ public static class Paths
 {
     // Windows: %LOCALAPPDATA%\mc-shared (keeps the old name: settings, game files, remembered logins).
     // macOS: ~/Library/Application Support/UncleCraft, logs in ~/Library/Logs/UncleCraft.
-    public static readonly string Root = Platform.IsMac
+    public static readonly string Root = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("UNCLECRAFT_DATA"))
+        ? Environment.GetEnvironmentVariable("UNCLECRAFT_DATA")! // for contributors and tests
+        : Platform.IsMac
         ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Library", "Application Support", "UncleCraft")
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "mc-shared");
     public static readonly string Logs = Platform.IsMac

@@ -21,17 +21,26 @@ Ask the host for:
 - the **server address** (the port is **25591**; you only need it if the app asks)
 - the **security code**: a long `AB:CD:...` code. **Paste it, don't type it.** It proves you're talking to the real
   server.
-- your **login name** and a one-time **invite code** (it works once, for about a week)
+- if the host's server doesn't offer **Sign in with Microsoft** yet: your **login name** and a one-time **invite
+  code** (it works once, for about a week)
 
 In UncleCraft:
 1. In setup, enter the server address and paste the security code.
-2. Choose **New player** > **I have an invite code**, enter your login name and invite code, and pick your own
-   password (10+ characters). The host never sees it. Leave **Remember me** ticked so next time is one click.
+2. Choose **New player** > **Sign in with Microsoft**. Click **Copy code & open Microsoft**, sign in on Microsoft's
+   own page with your own account, and enter the code the app shows. UncleCraft never sees your password. The first
+   time, the host has to let you in ("Ask the host to let you in"); then sign in again.
+   - No Microsoft sign-in, or it says Xbox refused (kids' accounts may need a parent to allow it in Xbox family
+     settings)? Use **I have an invite code** instead: enter your invite code and pick your own password (10+
+     characters). The host never sees it.
+   - Only ever enter a code that UncleCraft just showed you. Never type in a code someone else sends you.
+   - Already playing with an invite code or password? The app offers once to **Link your Microsoft account**. Your
+     worlds and inventory stay the same.
 3. Click your player card to play. The first start downloads Minecraft, Java and the mods (about 600 MB), so give it
    a few minutes. Minecraft then opens and joins the server by itself. To stop, just quit Minecraft.
 
 **Two players on one PC:** tick **Two players**, then click player 1, then player 2. Plug controllers in before you
-click Play.
+click Play. If player 1 signed in with Microsoft, player 2 can just be their **guest** (the "Guest of ..." card):
+no account needed, and the guest plays as `<Player 1>_P2` with their own inventory.
 
 ## Voice chat
 
