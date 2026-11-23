@@ -143,33 +143,62 @@ internal static class Installer
     }
 }
 
+/// <summary>Split-screen on Windows: both hosts (pixel page and classic window) size and tile the games with this.</summary>
 internal static class WindowTiler
 {
+    [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
     [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] private static extern bool AdjustWindowRectEx(ref RECT r, uint style, bool menu, uint exStyle);
+    [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT r, int size);
 
-    /// <summary>Waits for both game windows, then puts them left | right in the given working area (default: the primary screen's).</summary>
-    public static async Task TileSideBySide(Process a, Process b, Rectangle? workingArea = null)
+    /// <summary>
+    /// Minecraft's --width/--height set the game area inside the window; the title bar and frame come on top. So each
+    /// game starts with the client size that fits its SplitLayout rectangle, and Tile only nudges it into place.
+    /// </summary>
+    public static (int width, int height)? LaunchSize(int index, int count, Rectangle workingArea)
     {
+        if (count < 2) return null;
+        var r = SplitLayout.Rects(count, workingArea)[Math.Clamp(index, 0, count - 1)];
+        var frame = new RECT();
+        AdjustWindowRectEx(ref frame, 0x00CF0000 /* WS_OVERLAPPEDWINDOW, like GLFW's windows */, false, 0);
+        return (Math.Max(320, r.Width - (frame.Right - frame.Left)), Math.Max(240, r.Height - (frame.Bottom - frame.Top)));
+    }
+
+    /// <summary>Waits for every game window, then puts them in their SplitLayout rectangles of the given working area.</summary>
+    public static async Task Tile(IReadOnlyList<Process> games, Rectangle workingArea)
+    {
+        if (games.Count < 2) return; // one player: the game keeps its own window, as before split-screen
         var deadline = DateTime.Now.AddMinutes(4);
         while (DateTime.Now < deadline)
         {
-            a.Refresh(); b.Refresh();
-            if (a.HasExited || b.HasExited) return;
-            if (a.MainWindowHandle != IntPtr.Zero && b.MainWindowHandle != IntPtr.Zero) break;
+            foreach (var p in games) p.Refresh();
+            if (games.Any(p => p.HasExited)) return;
+            if (games.All(p => p.MainWindowHandle != IntPtr.Zero)) break;
             await Task.Delay(2000);
         }
         await Task.Delay(3000); // let the windows finish creating
-        var area = workingArea ?? Screen.PrimaryScreen!.WorkingArea;
-        var w = area.Width / 2;
-        Place(a.MainWindowHandle, area.X, area.Y, w, area.Height);
-        Place(b.MainWindowHandle, area.X + w, area.Y, w, area.Height);
+        var rects = SplitLayout.Rects(games.Count, workingArea);
+        for (var i = 0; i < games.Count; i++)
+        {
+            try { games[i].Refresh(); if (!games[i].HasExited) Place(games[i].MainWindowHandle, rects[i]); }
+            catch (Exception e) { Log.Info($"tile window {i + 1}: {e.Message}"); }
+        }
     }
 
-    private static void Place(IntPtr h, int x, int y, int w, int hgt)
+    private static void Place(IntPtr h, Rectangle r)
     {
         if (h == IntPtr.Zero) return;
         ShowWindow(h, 9); // restore
-        SetWindowPos(h, IntPtr.Zero, x, y, w, hgt, 0x0004 /* SWP_NOZORDER */);
+        SetWindowPos(h, IntPtr.Zero, r.X, r.Y, r.Width, r.Height, 0x0004 /* SWP_NOZORDER */);
+        // Windows 10/11 frames have invisible resize borders (about 7 px left, right and bottom): without this the
+        // visible windows would have gaps between them. Grow the window by exactly those borders.
+        if (GetWindowRect(h, out var outer) && DwmGetWindowAttribute(h, 9 /* DWMWA_EXTENDED_FRAME_BOUNDS */, out var seen, Marshal.SizeOf<RECT>()) == 0)
+        {
+            int l = seen.Left - outer.Left, t = seen.Top - outer.Top, rr = outer.Right - seen.Right, b = outer.Bottom - seen.Bottom;
+            if (l is > 0 and < 32 || t is > 0 and < 32 || rr is > 0 and < 32 || b is > 0 and < 32)
+                SetWindowPos(h, IntPtr.Zero, r.X - l, r.Y - t, r.Width + l + rr, r.Height + t + b, 0x0004);
+        }
     }
 }

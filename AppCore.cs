@@ -13,10 +13,36 @@ public sealed class UiError(string code, string message, string? person = null) 
 /// <summary>What the window host can do with game windows (Windows: size + tile; macOS: size only).</summary>
 public interface IGameWindows
 {
-    /// <summary>Size for each game window in split-screen (half the screen), or null to let the game choose.</summary>
-    (int width, int height)? SplitSize();
-    /// <summary>Called once all game windows are up.</summary>
+    /// <summary>Launch size (Minecraft's --width/--height) of player <paramref name="index"/> (0-based) out of
+    /// <paramref name="count"/> in split-screen: its SplitLayout rectangle, or null to let the game choose.</summary>
+    (int width, int height)? SplitSize(int index, int count);
+    /// <summary>Called once all game windows are up (games in player order).</summary>
     Task Arrange(IReadOnlyList<GameProcess> games);
+}
+
+/// <summary>
+/// Console-style split-screen on one monitor's working area (taskbar / menu bar excluded), in player order:
+/// 1 = the whole area; 2 = top | bottom halves; 3 = player 1 on the top half, players 2 and 3 in the bottom-left and
+/// bottom-right quarters; 4 = 2x2 grid (top-left, top-right, bottom-left, bottom-right). Odd pixels go to the
+/// right / bottom windows, so the rectangles cover the area exactly.
+/// </summary>
+public static class SplitLayout
+{
+    public static System.Drawing.Rectangle[] Rects(int count, System.Drawing.Rectangle area)
+    {
+        int x = area.X, y = area.Y, w = area.Width, h = area.Height, hw = w / 2, hh = h / 2;
+        System.Drawing.Rectangle R(int rx, int ry, int rw, int rh) => new(rx, ry, rw, rh);
+        var top = R(x, y, w, hh);
+        var bottomLeft = R(x, y + hh, hw, h - hh);
+        var bottomRight = R(x + hw, y + hh, w - hw, h - hh);
+        return count switch
+        {
+            <= 1 => [area],
+            2 => [top, R(x, y + hh, w, h - hh)],
+            3 => [top, bottomLeft, bottomRight],
+            _ => [R(x, y, hw, hh), R(x + hw, y, w - hw, hh), bottomLeft, bottomRight],
+        };
+    }
 }
 
 /// <summary>
@@ -131,7 +157,8 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
         ["server"] = _s.Server,
         ["fingerprint"] = HostKey() is { } k ? FormatFp(k) : _s.Fingerprint,
         ["soundOn"] = _s.SoundOn,
-        ["split"] = _s.SecondPlayer,
+        ["playerCount"] = _s.PlayerCount, // 1-4 players on this PC
+        ["players"] = new JsonArray([.. _s.Players.Select(p => (JsonNode)p)]), // screens 2-4 last time: names or "guest"
         ["player1"] = _s.Player1, // the classic window pre-fills its name box with it
     };
 
@@ -337,7 +364,14 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
     }
 
     private JsonNode? SetSound(JsonObject m) { _s.SoundOn = m["on"]?.GetValue<bool>() ?? true; _s.Save(); return null; }
-    private JsonNode? SetMode(JsonObject m) { _s.SecondPlayer = m["split"]?.GetValue<bool>() ?? false; _s.Save(); return null; }
+    /// <summary>{players: 1-4}; an older page sends {split: bool}.</summary>
+    private JsonNode? SetMode(JsonObject m)
+    {
+        var n = m["players"]?.GetValue<int>() ?? (m["split"]?.GetValue<bool>() == true ? 2 : 1);
+        _s.PlayerCount = Math.Clamp(n, 1, Settings.MaxPlayers);
+        _s.Save();
+        return null;
+    }
 
     private async Task<JsonNode> Forget(JsonObject m)
     {
@@ -399,9 +433,14 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
         var choices = m["players"]!.AsArray().Select(n => ParseChoice(n!, hostKey)).ToList();
         if (choices.Count == 0 || choices[0] is GuestChoice)
             throw new UiError("error", "Pick player 1 first; a guest plays next to them.");
-        if (choices.Count == 2 && choices[1] is not GuestChoice && choices[0].Name.Equals(choices[1].Name, StringComparison.OrdinalIgnoreCase))
-            throw new UiError("error", "The two screens need two different people.");
-        if (choices[0] is PasswordChoice) { _s.Player1 = choices[0].Name; _s.Save(); }
+        if (choices.Count > Settings.MaxPlayers)
+            throw new UiError("error", $"Up to {Settings.MaxPlayers} players fit on one PC.");
+        var people = choices.Where(c => c is not GuestChoice).Select(c => c.Name).ToList();
+        if (people.Distinct(StringComparer.OrdinalIgnoreCase).Count() != people.Count)
+            throw new UiError("error", "Each screen needs a different person (or a guest).");
+        if (choices[0] is PasswordChoice) _s.Player1 = choices[0].Name;
+        if (choices.Count > 1) _s.Players = [.. choices.Skip(1).Select(c => c is GuestChoice ? "guest" : c.Name)];
+        _s.Save();
 
         _busy = true;
         using var cts = new CancellationTokenSource();
@@ -437,7 +476,6 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
             _playCts = null;
 
             Event("phase", new JsonObject { ["phase"] = "starting" });
-            var size = leases.Count > 1 ? windows.SplitSize() : null;
             var games = new List<GameProcess>();
             var started = leases.ToList();
             for (var i = 0; i < started.Count; i++)
@@ -453,6 +491,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
                 {
                     // Fetched right before each launch: in interim mode this is a short-lived one-time join name.
                     var token = await broker.GetMinecraftToken(lease);
+                    var size = started.Count > 1 ? windows.SplitSize(i, started.Count) : null; // its own screen area
                     gp = GameLauncher.Launch(game, slot, token, address, size?.width, size?.height);
                 }
                 catch { conn?.Dispose(); lock (_slots) _slots.Remove(slot); throw; }
@@ -460,7 +499,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
                 if (lease.GuestOf == null) RememberedStore.Touch(hostKey, lease.Person);
                 _ = Watch(broker, lease, gp, conn);
                 leases.Remove(lease); // owned by Watch() now
-                if (i == 0 && started.Count > 1) await Task.Delay(10_000); // stagger startup
+                if (i < started.Count - 1) await Task.Delay(10_000); // stagger startup: one game boots at a time
             }
             current = null;
             Event("saved", new JsonObject { ["saved"] = SavedJson() });
@@ -478,6 +517,12 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
             await windows.Arrange(games);
             Event("phase", new JsonObject { ["phase"] = "ingame" });
             return null;
+        }
+        catch (BrokerException e) when (e.Code == "no_free_account" && choices.Count > 1)
+        {
+            // all or nothing: the seats already taken for this launch go back
+            foreach (var l in leases) _ = broker.Release(l);
+            throw new UiError("no_free_account", $"The server is full: not enough free seats for {choices.Count} players; try fewer.", current?.Name);
         }
         catch (BrokerException e)
         {

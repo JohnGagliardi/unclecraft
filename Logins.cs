@@ -17,7 +17,8 @@ public sealed record InviteChoice(string Code, string? NewPassword = null) : Pla
     public override string ToString() => $"InviteChoice {{ Code = {Code[..4]}…, NewPassword = {(NewPassword == null ? "none" : "***")} }}";
 }
 
-/// <summary>Split-screen player 2 as a guest of player 1 (no account of its own). The host names it "&lt;Person&gt;_P2".</summary>
+/// <summary>A split-screen player (2-4) as a guest of player 1 (no account of its own). The host names each guest
+/// after the next free guest seat: "&lt;Person&gt;_P2", "_P3", "_P4".</summary>
 public sealed record GuestChoice() : PlayerChoice("Guest");
 
 /// <summary>Shared login logic for both windows: saved device, password, or invite code.</summary>

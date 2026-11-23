@@ -423,6 +423,42 @@ public sealed class GameProcess(Process proc, int slot)
     private bool Refresh() { try { Proc.Refresh(); return true; } catch { return false; } }
 }
 
+/// <summary>
+/// Controllable (MrCrayfish, 0.26.x) per game folder. Its config can't pick "controller number N": it has no index or
+/// GUID option. It remembers the pad picked in Controllable settings > Select Controller in
+/// config/controllable/selected_controllers.json (the pad's name, GUID, serial, vendor, product, ...), per folder, and
+/// with autoSelect on it grabs the first pad it sees. With several games on one PC that means every window takes pad 1.
+/// So games/p2-p4 get autoSelect = false: each starts with no pad until its player picks theirs once, and that folder
+/// then remembers it. games/p1 keeps autoSelect (one player just plugs in and plays).
+/// </summary>
+internal static class ControllerSetup
+{
+    private static readonly System.Text.RegularExpressions.Regex AutoSelectOn =
+        new(@"^([ \t]*autoSelect[ \t]*=[ \t]*)true\b", System.Text.RegularExpressions.RegexOptions.Multiline);
+
+    public static void Apply(string gameDir, int slot)
+    {
+        if (slot < 2) return;
+        var cfg = Path.Combine(gameDir, "config", "controllable-client.toml");
+        try
+        {
+            if (!File.Exists(cfg))
+            {
+                // first start of this folder: only this option; Controllable adds the rest with its defaults
+                Directory.CreateDirectory(Path.GetDirectoryName(cfg)!);
+                File.WriteAllText(cfg, "[options]\n\tautoSelect = false\n");
+                return;
+            }
+            var text = File.ReadAllText(cfg);
+            if (AutoSelectOn.IsMatch(text)) File.WriteAllText(cfg, AutoSelectOn.Replace(text, "${1}false"));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.Info($"p{slot}: couldn't set Controllable's autoSelect ({e.Message}); this window may take pad 1 too");
+        }
+    }
+}
+
 public static class GameLauncher
 {
     private static readonly string[] DefaultOptions =
@@ -442,6 +478,7 @@ public static class GameLauncher
         Directory.CreateDirectory(gameDir);
         var options = Path.Combine(gameDir, "options.txt");
         if (!File.Exists(options)) File.WriteAllLines(options, DefaultOptions);
+        ControllerSetup.Apply(gameDir, slot);
 
         // exactly the host's mods
         var modsDir = Path.Combine(gameDir, "mods");

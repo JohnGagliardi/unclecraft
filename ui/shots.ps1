@@ -1,5 +1,6 @@
 # Renders the UI's demo screens offscreen with headless Edge (no window opens). Dev helper only; not shipped.
 #   .\shots.ps1 [-Out <folder>] [-Screens main,split2,launch,error,setup,setup2,test]
+#   split-screen: split3, split3full, split4, split4full, guest4, launch3, launch4, full4
 param([string]$Out = "$PSScriptRoot\..\shots", [string[]]$Screens = @('main', 'split2', 'launch', 'error', 'setup', 'test'),
       [int]$Width = 1200, [int]$Height = 800)
 $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"

@@ -28,15 +28,17 @@
       <div class="panel-head">
         <span data-px="WHO'S PLAYING?" data-px-scale="3" data-px-shadow="#0b1226"></span>
         <div class="mode-toggle" role="radiogroup" aria-label="Players on this PC">
-          <button data-mode="1" data-nav role="radio">1 PLAYER</button>
-          <button data-mode="2" data-nav role="radio">2 PLAYERS &middot; SPLIT-SCREEN</button>
+          <button data-mode="1" data-nav role="radio" aria-label="1 player">1 PLAYER</button>
+          <button data-mode="2" data-nav role="radio" aria-label="2 players, split-screen">2</button>
+          <button data-mode="3" data-nav role="radio" aria-label="3 players, split-screen">3</button>
+          <button data-mode="4" data-nav role="radio" aria-label="4 players, split-screen">4 PLAYERS</button>
         </div>
       </div>
 
       <div id="splitPicker" class="split" hidden>
-        <button class="slot" data-slot="0" data-nav><span class="slot-label">LEFT SCREEN</span><span class="slot-body"></span></button>
-        <div class="split-plus" aria-hidden="true">+</div>
-        <button class="slot" data-slot="1" data-nav><span class="slot-label">RIGHT SCREEN</span><span class="slot-body"></span></button>
+        <!-- the screens (.slot) are drawn by app.js in the layout the games get: 2 = top/bottom, 3 = top + two
+             quarters, 4 = 2x2 -->
+        <div id="slots" class="slots"></div>
         <div class="split-go">
           <button id="startSplit" class="btn mega" data-nav hidden></button>
           <div id="splitHint" class="hint">Click a player for each screen. Click a filled screen to empty it.</div>

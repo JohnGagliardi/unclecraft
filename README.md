@@ -30,9 +30,28 @@ In UncleCraft:
 3. Click your player card to play. The first start downloads Minecraft, Java and the mods (about 600 MB), so give it
    a few minutes. Minecraft then opens and joins the server by itself. To stop, just quit Minecraft.
 
-**Two players on one PC:** tick **Two players**, then click player 1, then player 2. Plug controllers in before you
-click Play. Player 2 can also play as your guest, no login of their own: click player 1, then the
-"Guest of ..." card; the guest plays as `<Player 1>_P2` with their own inventory (when the host's server offers it).
+## Up to four players
+
+One PC can run up to four games at once, console-style split-screen.
+- Pick **1**, **2**, **3** or **4** players at the top of the player cards. Then click player 1, then a card for each
+  other screen. Each of players 2-4 is another saved player, or **Guest of <player 1>** (when the host's server
+  offers guests): no login of their own, they play as `<Player 1>_P2`, `_P3`, `_P4` with their own inventories.
+  Click a filled screen to empty it. Emptying player 1 also removes the guests.
+- **Layout** on the monitor the launcher is on (the taskbar stays visible):
+  - 2 players: top and bottom halves, full width (player 1 on top).
+  - 3 players: player 1 on the top half; players 2 and 3 share the bottom half, left and right.
+  - 4 players: a 2x2 grid (1 top-left, 2 top-right, 3 bottom-left, 4 bottom-right).
+  On Windows the app puts the windows there. On a Mac each game opens at the right size but you drag it into place
+  (macOS doesn't let the app move other windows).
+- **All or nothing:** every player takes a seat on the server. If there aren't enough free seats for everyone, nobody
+  starts and you see **THE SERVER IS FULL**: try fewer players.
+- **Controllers:** plug them all in before you click Play. The keyboard and mouse work in whichever window you
+  click. Player 1's game takes the first controller by itself. Players 2-4 start with no controller, so they don't
+  all grab controller 1. In each of those windows, open Controllable settings > **Select Controller** once and pick
+  that player's pad. The window's game folder remembers it for next time. Controllable can't be told "use controller
+  number 3", so the app can't pick for you. Two identical pads may need picking again after a restart.
+- Each screen has its own game folder (`games\p1` to `games\p4`: options, Controllable settings, logs). Games start
+  10 seconds apart.
 
 ## Voice chat
 

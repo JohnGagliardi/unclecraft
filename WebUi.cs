@@ -101,14 +101,9 @@ public sealed class WebUiForm : Form, IGameWindows, IUpdateHost
     /// <summary>The working area of the screen the launcher is on: games are sized and tiled there.</summary>
     private Rectangle LauncherArea() => (Screen.FromHandle(Handle) ?? Screen.PrimaryScreen)!.WorkingArea;
 
-    public (int width, int height)? SplitSize()
-    {
-        var area = LauncherArea();
-        return (area.Width / 2, area.Height);
-    }
+    public (int width, int height)? SplitSize(int index, int count) => WindowTiler.LaunchSize(index, count, LauncherArea());
 
-    public Task Arrange(IReadOnlyList<GameProcess> games) =>
-        games.Count == 2 ? WindowTiler.TileSideBySide(games[0].Proc, games[1].Proc, LauncherArea()) : Task.CompletedTask;
+    public Task Arrange(IReadOnlyList<GameProcess> games) => WindowTiler.Tile([.. games.Select(g => g.Proc)], LauncherArea());
 
     // ---------------- IUpdateHost ----------------
 

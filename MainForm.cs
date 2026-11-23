@@ -21,7 +21,7 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
     private readonly CheckBox _remember1 = new() { Text = "Remember me on this PC", AutoSize = true, Checked = true };
     private readonly Button _play = new() { Text = "Log in and play", Width = 160, Height = 34 };
     private readonly Button _cancel = new() { Text = "Cancel", Width = 90, Height = 34, Enabled = false };
-    private readonly CheckBox _second = new() { Text = "Two players on this PC (split-screen)", AutoSize = true };
+    private readonly ComboBox _count = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200 };
     private readonly CheckBox _guest = new() { Text = "Player 2: guest of player 1 (no account needed)", AutoSize = true, Checked = true, Visible = false };
     private readonly Label _secondHint = new() { AutoSize = true, ForeColor = SystemColors.GrayText };
     private readonly ProgressBar _bar = new() { Width = 420, Height = 14 };
@@ -29,7 +29,7 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
     private readonly Dictionary<string, Label> _rows = new(StringComparer.OrdinalIgnoreCase); // person -> error label
     private readonly Dictionary<int, TaskCompletionSource<JsonNode?>> _pending = [];
     private List<string> _people = [];
-    private (JsonObject choice, string name)? _pendingP1; // split-screen: first pick waits for the second
+    private readonly List<(JsonObject choice, string name)> _picked = []; // split-screen: picks wait for the last one
     private int _nextId;
     private int _players; // in the current launch
     private bool _busy;
@@ -56,7 +56,9 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
         Row("Address", _server);
         Row("Fingerprint", _fingerprint);
         Wide(Heading("Who's playing? Click your name to play."));
-        Wide(_second);
+        _count.Items.AddRange(["1 player", "2 players (split-screen)", "3 players (split-screen)", "4 players (split-screen)"]);
+        _count.SelectedIndex = 0;
+        Row("Players on this PC", _count);
         Wide(_guest);
         Wide(_secondHint);
         Wide(_saved);
@@ -73,10 +75,10 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
         Wide(_status);
         Controls.Add(t);
 
-        _second.CheckedChanged += async (_, _) =>
+        _count.SelectedIndexChanged += async (_, _) =>
         {
-            _pendingP1 = null; UpdateHint(); RenderSaved();
-            try { await Call("setMode", new JsonObject { ["split"] = _second.Checked }); } catch { /* only a preference */ }
+            _picked.Clear(); UpdateHint(); RenderSaved();
+            try { await Call("setMode", new JsonObject { ["players"] = Count }); } catch { /* only a preference */ }
         };
         _guest.CheckedChanged += (_, _) => UpdateHint();
         _name1.TextChanged += (_, _) => UpdateInvite();
@@ -124,7 +126,7 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
             _server.Text = s?["server"]?.GetValue<string>() ?? "";
             _fingerprint.Text = s?["fingerprint"]?.GetValue<string>() ?? "";
             _name1.Text = s?["player1"]?.GetValue<string>() ?? "";
-            _second.Checked = s?["split"]?.GetValue<bool>() ?? false;
+            _count.SelectedIndex = Math.Clamp(s?["playerCount"]?.GetValue<int>() ?? 1, 1, Settings.MaxPlayers) - 1;
             SetSaved(d?["saved"]);
             SetFeatures(d?["features"]);
             if (d?["update"]?["notice"]?.GetValue<string>() is { } notice) Status(notice);
@@ -194,7 +196,7 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
                     case "login": Status($"Logging in {Str(m, "person")}..."); break;
                     case "starting": _cancel.Enabled = false; Status("Starting Minecraft..."); break;
                     case "booting":
-                        Status(_players > 1 ? "Both games are starting; they will be placed side by side." : "Minecraft is starting and will join the server.");
+                        Status(_players > 1 ? $"The {_players} games are starting; they will be arranged on this screen." : "Minecraft is starting and will join the server.");
                         break;
                     case "ingame": Status("Minecraft is running. Have fun!"); break;
                 }
@@ -208,17 +210,22 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
 
     private void UpdateInvite() => _invitePass.Visible = _invitePassLabel.Visible = BrokerClient.NormalizeInvite(_name1.Text) != null;
 
-    private bool GuestP2 => _second.Checked && _features.Contains("guests") && _guest.Checked;
+    private int Count => _count.SelectedIndex + 1;
+    private bool Split => Count > 1;
+    /// <summary>"The rest are guests": player 1 is picked, players 2-N play as guests of player 1.</summary>
+    private bool Guests => Split && _features.Contains("guests") && _guest.Checked;
 
     private void UpdateHint()
     {
-        _guest.Visible = _second.Checked && _features.Contains("guests");
-        _secondHint.Text = !_second.Checked ? ""
-            : GuestP2 ? "Click player 1; a guest plays next to them."
-            : _pendingP1 == null ? "Click player 1, then player 2 (or log in a new player below)."
-            : $"Player 1: {_pendingP1.Value.name}. Now click player 2, or log in a new player below.";
-        _secondHint.Visible = _second.Checked;
-        _play.Text = _second.Checked && _pendingP1 != null ? "Log in as player 2 and play" : "Log in and play";
+        _guest.Visible = Split && _features.Contains("guests");
+        _guest.Text = Count <= 2 ? "Player 2: guest of player 1 (no account needed)" : $"Players 2-{Count}: guests of player 1 (no accounts needed)";
+        var next = _picked.Count + 1;
+        _secondHint.Text = !Split ? ""
+            : Guests ? (Count == 2 ? "Click player 1; a guest plays next to them." : $"Click player 1; {Count - 1} guests play next to them.")
+            : _picked.Count == 0 ? $"Click player 1, then players 2-{Count} (or log in a new player below)."
+            : $"Picked: {string.Join(", ", _picked.Select(p => p.name))}. Now click player {next}, or log in a new player below.";
+        _secondHint.Visible = Split;
+        _play.Text = Split && !Guests && _picked.Count > 0 ? $"Log in as player {next}" + (next == Count ? " and play" : "") : "Log in and play";
     }
 
     private void SetSaved(JsonNode? saved)
@@ -237,8 +244,9 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
         foreach (var person in _people)
         {
             var row = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 2, 0, 2), Enabled = !_busy };
-            var picked = _pendingP1?.name.Equals(person, StringComparison.OrdinalIgnoreCase) == true;
-            var play = new Button { Text = picked ? $"Player 1: {person}" : $"Play as {person}", AutoSize = true, MinimumSize = new Size(180, 34) };
+            var pickedAt = _picked.FindIndex(p => p.name.Equals(person, StringComparison.OrdinalIgnoreCase));
+            var picked = pickedAt >= 0;
+            var play = new Button { Text = picked ? $"Player {pickedAt + 1}: {person}" : $"Play as {person}", AutoSize = true, MinimumSize = new Size(180, 34) };
             if (picked) play.BackColor = Color.FromArgb(214, 245, 214);
             play.Click += async (_, _) => await Choose(new JsonObject { ["kind"] = "saved", ["person"] = person }, person);
             var forget = new LinkLabel { Text = "Forget", AutoSize = true, Margin = new Padding(8, 9, 0, 0) };
@@ -253,32 +261,45 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
         _saved.ResumeLayout();
     }
 
-    /// <summary>One click = play. With two players ticked, the first click picks player 1 and the second launches both.</summary>
+    /// <summary>One click = play. In split-screen each click picks the next player and the last pick launches them all;
+    /// with guests ticked, clicking player 1 launches them with guests on the other screens.</summary>
     private async Task Choose(JsonObject c, string name)
     {
         if (_busy) return;
         foreach (var err in _rows.Values) err.Text = "";
-        if (!_second.Checked) { await Play(c, null); return; }
-        if (GuestP2) { _pendingP1 = null; await Play(c, new JsonObject { ["kind"] = "guest" }); return; }
-        if (_pendingP1 == null)
+        if (!Split) { await Play([c]); return; }
+        if (Guests)
         {
-            _pendingP1 = (c, name);
-            if (c["kind"]?.GetValue<string>() == "password") { _name1.Clear(); _pass1.Clear(); } // free the form for player 2
-            UpdateHint(); RenderSaved();
-            Status($"Player 1 is {name}. Now click player 2.");
+            _picked.Clear();
+            await Play([c, .. Enumerable.Range(0, Count - 1).Select(_ => new JsonObject { ["kind"] = "guest" })]);
             return;
         }
-        var p1 = _pendingP1.Value;
-        _pendingP1 = null;
+        var at = _picked.FindIndex(p => p.name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (at >= 0)
+        {
+            _picked.RemoveAt(at);
+            UpdateHint(); RenderSaved();
+            Status($"Unpicked {name}. Click player {_picked.Count + 1}.");
+            return;
+        }
+        _picked.Add((c, name));
+        if (c["kind"]?.GetValue<string>() == "password") { _name1.Clear(); _pass1.Clear(); } // free the form for the next player
+        if (_picked.Count < Count)
+        {
+            UpdateHint(); RenderSaved();
+            Status($"Player {_picked.Count} is {name}. Now click player {_picked.Count + 1}.");
+            return;
+        }
+        var players = _picked.Select(p => p.choice).ToList();
+        _picked.Clear();
         UpdateHint(); RenderSaved();
-        if (p1.name.Equals(name, StringComparison.OrdinalIgnoreCase)) { Status("Unpicked. Click player 1 again."); return; }
-        await Play(p1.choice, c);
+        await Play(players);
     }
 
     private async Task Forget(string person)
     {
         if (_busy || MessageBox.Show($"Forget the saved login for {person} on this PC?", AppName, MessageBoxButtons.YesNo) != DialogResult.Yes) return;
-        if (_pendingP1?.name.Equals(person, StringComparison.OrdinalIgnoreCase) == true) { _pendingP1 = null; UpdateHint(); }
+        if (_picked.RemoveAll(p => p.name.Equals(person, StringComparison.OrdinalIgnoreCase)) > 0) { UpdateHint(); RenderSaved(); }
         Status($"Forgetting {person}...");
         try
         {
@@ -301,7 +322,7 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
         _bar.Value = Math.Min(done, _bar.Maximum);
     }
 
-    private async Task Play(JsonObject p1, JsonObject? p2)
+    private async Task Play(List<JsonObject> chosen)
     {
         _busy = true;
         SetEnabled(false);
@@ -315,8 +336,7 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
             SetSaved(setup?["saved"]);
             SetFeatures(setup?["features"]);
 
-            var players = new JsonArray { p1 };
-            if (p2 != null) players.Add(p2);
+            var players = new JsonArray([.. chosen]);
             _players = players.Count;
             _cancel.Enabled = true; // until the "starting" phase
             await Call("play", new JsonObject { ["players"] = players });
@@ -343,7 +363,7 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
     private void SetEnabled(bool on)
     {
         _play.Enabled = on;
-        _second.Enabled = on;
+        _count.Enabled = on;
         _guest.Enabled = on;
         _server.Enabled = on;
         _fingerprint.Enabled = on;
@@ -352,14 +372,12 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
 
     // ---------------- IGameWindows ----------------
 
-    public (int width, int height)? SplitSize()
-    {
-        var area = (Screen.FromHandle(Handle) ?? Screen.PrimaryScreen)!.WorkingArea;
-        return (area.Width / 2, area.Height);
-    }
+    /// <summary>The working area of the screen this window is on: games are sized and tiled there.</summary>
+    private Rectangle LauncherArea() => (Screen.FromHandle(Handle) ?? Screen.PrimaryScreen)!.WorkingArea;
 
-    public Task Arrange(IReadOnlyList<GameProcess> games) =>
-        games.Count == 2 ? WindowTiler.TileSideBySide(games[0].Proc, games[1].Proc) : Task.CompletedTask;
+    public (int width, int height)? SplitSize(int index, int count) => WindowTiler.LaunchSize(index, count, LauncherArea());
+
+    public Task Arrange(IReadOnlyList<GameProcess> games) => WindowTiler.Tile([.. games.Select(g => g.Proc)], LauncherArea());
 
     public void Handover(bool toNewVersion) => UpdateHandover.Run(this, toNewVersion);
 }

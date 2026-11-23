@@ -26,7 +26,11 @@ if (host) host.listen((m) => {
 });
 
 /* ================= state ================= */
-const S = { settings: {}, saved: [], mode: 1, slots: [null, null], status: null, busy: false, players: [], countdown: 0, features: new Set() };
+const S = { settings: {}, saved: [], mode: 1, slots: [], status: null, busy: false, players: [], countdown: 0, features: new Set() };
+/** Screen names per player count, in player order: the layout the games get on the monitor (see SplitLayout in AppCore.cs). */
+const SCREENS = { 2: ['TOP', 'BOTTOM'], 3: ['TOP', 'BOTTOM LEFT', 'BOTTOM RIGHT'], 4: ['TOP LEFT', 'TOP RIGHT', 'BOTTOM LEFT', 'BOTTOM RIGHT'] };
+const screenName = (i, n = S.mode) => SCREENS[n]?.[i] || '';
+const emptySlots = (n) => Array.from({ length: n > 1 ? n : 0 }, () => null);
 
 /* ================= friendly errors ================= */
 const ERRORS = {
@@ -54,7 +58,7 @@ const ERRORS = {
   server_closed: ['SERVER CLOSED FOR THE NIGHT', 'Quiet hours: the server sleeps overnight. Come back after it reopens.'],
   update_quit_game: ['QUIT MINECRAFT FIRST', 'A new UncleCraft is ready. Quit Minecraft, then press Play again to update.'],
   // split-screen guests (the broker's message is shown above the hint)
-  guest_in_use: ['GUEST ALREADY PLAYING', 'Player 1 already has a guest playing. Close that game first, or pick a saved player for the right screen.'],
+  guest_in_use: ['GUESTS ALREADY PLAYING', 'Player 1 already has all their guests playing (up to 3). Close a guest\'s game first, or pick a saved player for that screen.'],
   guest_cannot_bring_guest: ["A GUEST CAN'T BRING A GUEST", 'Only player 1 can add a guest.'],
 };
 function friendly(err) {
@@ -105,35 +109,46 @@ function renderSoundBtn() { $('#soundBtn').replaceChildren(iconSvg(Sound.on ? IC
 /* ================= player cards ================= */
 /**
  * Split-screen with "guests" on the host and any player 1 chosen (saved, password or invite): "Guest of <player 1>" is
- * offered first. Returns { of, name } or null. An invite's real name only comes from the host at login.
+ * offered first, once per free screen (up to 3 guests). Returns { of, base } or null. An invite's real name only comes
+ * from the host at login.
  */
 function guestHost() {
   const p1 = S.slots[0];
-  if (S.mode !== 2 || !S.features.has('guests') || !p1 || p1.kind === 'guest') return null;
-  return p1.kind === 'invite' ? { of: 'player 1', name: 'Guest' } : { of: p1.person, name: `${p1.person}_P2` };
+  if (S.mode < 2 || !S.features.has('guests') || !p1 || p1.kind === 'guest') return null;
+  return p1.kind === 'invite' ? { of: 'player 1', base: 'Guest' } : { of: p1.person, base: p1.person };
+}
+/** Guest names follow the host's rule: each guest gets the next free seat, <player 1>_P2, _P3, _P4 in screen order. */
+function guestName(base, n) { return base === 'Guest' ? `Guest ${n}` : `${base}_P${n + 1}`; }
+function renumberGuests() {
+  const g = guestHost(); let n = 0;
+  S.slots = S.slots.map((c) => (c?.kind === 'guest' ? (g ? { kind: 'guest', person: guestName(g.base, ++n) } : null) : c));
 }
 function renderCards() {
   const box = $('#cards'); box.replaceChildren();
   const guest = guestHost();
   if (guest) {
-    const { of: gh, name } = guest; const slotted = S.slots[1]?.kind === 'guest';
-    const card = el('button', { className: 'card guest' + (S.busy ? ' busy' : '') + (slotted ? ' slotted' : '') });
-    card.dataset.nav = ''; card.setAttribute('role', 'listitem'); card.setAttribute('aria-label', `Player 2: guest of ${gh}`);
-    if (slotted) card.dataset.slotname = 'RIGHT';
+    const guests = S.slots.filter((c) => c?.kind === 'guest').length;
+    const free = S.slots.indexOf(null);
+    const name = guestName(guest.base, guests + 1);
+    const card = el('button', { className: 'card guest' + (S.busy ? ' busy' : '') + (guests ? ' slotted' : '') });
+    card.dataset.nav = ''; card.setAttribute('role', 'listitem');
+    card.setAttribute('aria-label', free > 0 ? `Player ${free + 1}: guest of ${guest.of}` : `Guest of ${guest.of}: all screens are full`);
+    if (guests) card.dataset.slotname = guests === 1 ? '1 GUEST' : `${guests} GUESTS`;
     card.append(el('span', { className: 'tag', textContent: 'GUEST' }), el('img', { className: 'avatar', src: avatarUrl(name), alt: '' }),
-      el('span', { className: 'name', textContent: `Guest of ${gh}` }), el('span', { className: 'when', textContent: `Plays as ${name}, no account needed` }));
+      el('span', { className: 'name', textContent: `Guest of ${guest.of}` }),
+      el('span', { className: 'when', textContent: free > 0 ? `Plays as ${name}, no account needed` : 'Click a screen to make room' }));
     card.onmouseenter = () => Sound.hover();
     card.onclick = () => choose({ kind: 'guest', person: name });
     box.append(card);
   }
   for (const p of S.saved) {
-    const slotIdx = S.slots.findIndex((c) => c && sameName(c.person, p.person));
+    const slotIdx = S.slots.findIndex((c) => c && c.kind !== 'guest' && sameName(c.person, p.person));
     const card = el('button', { className: 'card' + (S.busy ? ' busy' : '') + (slotIdx >= 0 ? ' slotted' : '') });
     card.dataset.nav = ''; card.setAttribute('role', 'listitem');
     card.setAttribute('aria-label', `Play as ${p.person}`);
-    if (slotIdx >= 0) card.dataset.slotname = slotIdx === 0 ? 'LEFT' : 'RIGHT';
+    if (slotIdx >= 0) card.dataset.slotname = `P${slotIdx + 1} ${screenName(slotIdx)}`;
     card.append(
-      el('span', { className: 'play-chip', textContent: S.mode === 2 ? 'PICK' : 'PLAY' }),
+      el('span', { className: 'play-chip', textContent: S.mode > 1 ? 'PICK' : 'PLAY' }),
       el('img', { className: 'avatar', src: avatarUrl(p.person), alt: '' }),
       el('span', { className: 'name', textContent: p.person }),
       el('span', { className: 'when', textContent: ago(p.lastPlayed) }),
@@ -165,7 +180,7 @@ async function confirmForget(person) {
   $('#confirmNo').onclick = () => { Sound.back(); closeModal(m); };
   $('#confirmYes').onclick = async () => {
     closeModal(m);
-    S.slots = S.slots.map((c) => (c && sameName(c.person, person) ? null : c));
+    S.slots = S.slots.map((c) => (c && c.kind !== 'guest' && sameName(c.person, person) ? null : c)); renumberGuests();
     try { const r = await call('forget', { person }); S.saved = r.saved; } catch { /* ignore */ }
     renderCards(); renderSlots(); toast(`Forgot ${person} on this PC.`);
   };
@@ -173,43 +188,55 @@ async function confirmForget(person) {
 
 /* ================= one click / split-screen slots ================= */
 function setMode(mode) {
-  S.mode = mode; S.slots = [null, null]; cancelCountdown();
+  mode = Math.min(4, Math.max(1, Number(mode) || 1));
+  S.mode = mode; S.slots = emptySlots(mode); cancelCountdown();
   $$('.mode-toggle button[data-mode]').forEach((b) => b.setAttribute('aria-checked', String(Number(b.dataset.mode) === mode)));
-  $('#splitPicker').hidden = mode !== 2;
-  renderSlots(); renderCards();
-  call('setMode', { split: mode === 2 }).catch(() => {});
+  $('#splitPicker').hidden = mode < 2;
+  buildSlots(); renderSlots(); renderCards();
+  call('setMode', { players: mode }).catch(() => {});
 }
-function choose(choice) {
+/** One button per screen, laid out like the games will be (CSS .slots.n2/.n3/.n4). */
+function buildSlots() {
+  const box = $('#slots'); box.className = `slots n${S.mode}`;
+  box.replaceChildren(...S.slots.map((_, i) => {
+    const b = el('button', { className: 'slot' }, el('span', { className: 'slot-label', textContent: `P${i + 1} · ${screenName(i)}` }), el('span', { className: 'slot-body' }));
+    b.dataset.slot = String(i); b.dataset.nav = '';
+    b.onclick = () => { const c = S.slots[i]; if (c) choose(c, i); };
+    return b;
+  }));
+}
+/** In split-screen a click fills the next empty screen; clicking a filled screen (or a picked card) empties it. */
+function choose(choice, at = -1) {
   if (S.busy) return;
   S.saved.forEach((p) => { p.error = null; });
   if (S.mode === 1) { Sound.click(); return play([choice]); }
-  // split-screen: fill the next empty screen
-  const i = S.slots.findIndex((c) => c && sameName(c.person, choice.person));
+  const i = at >= 0 ? at : choice.kind === 'guest' ? -1 : S.slots.findIndex((c) => c && c.kind !== 'guest' && sameName(c.person, choice.person));
   if (i >= 0) {
-    S.slots[i] = null; if (i === 0 && S.slots[1]?.kind === 'guest') S.slots[1] = null; // a guest belongs to player 1
+    S.slots[i] = null; renumberGuests(); // emptying player 1 also clears the guests: they belong to player 1
     Sound.back(); cancelCountdown(); renderSlots(); renderCards(); return;
   }
   if (choice.kind === 'guest' && !S.slots[0]) return;
   const free = S.slots.indexOf(null);
-  if (free < 0) { toast('Both screens are full. Click a screen to empty it.'); return; }
-  S.slots[free] = choice; Sound.pick();
+  if (free < 0) { toast('All screens are full. Click a screen to empty it.'); return; }
+  S.slots[free] = choice; renumberGuests(); Sound.pick();
   renderSlots(); renderCards();
-  if (free === 0 && guestHost()) setTimeout(() => $('.card.guest')?.focus(), 30); // the default for player 2
+  if (guestHost() && S.slots.includes(null)) setTimeout(() => $('.card.guest')?.focus(), 30); // the default for players 2-4
 }
 function renderSlots() {
-  $$('.slot').forEach((slot) => {
+  $$('#slots .slot').forEach((slot) => {
     const i = Number(slot.dataset.slot); const c = S.slots[i]; const body = slot.querySelector('.slot-body');
     slot.classList.toggle('filled', !!c);
+    const where = `Player ${i + 1}, ${screenName(i).toLowerCase()} screen`;
     if (c) {
       const wrap = el('div', {}, el('img', { src: avatarUrl(c.person), alt: '' }), el('div', { className: 'who', textContent: c.kind === 'guest' ? `${c.person} (guest)` : c.person }));
       wrap.style.textAlign = 'center'; body.replaceChildren(wrap);
-      slot.setAttribute('aria-label', `${i ? 'Right' : 'Left'} screen: ${c.person}. Click to empty.`);
+      slot.setAttribute('aria-label', `${where}: ${c.person}. Click to empty.`);
     } else {
-      body.replaceChildren(el('span', { textContent: 'Click a player' }));
-      slot.setAttribute('aria-label', `${i ? 'Right' : 'Left'} screen: empty`);
+      body.replaceChildren(el('span', { textContent: i > 0 && guestHost() ? 'Click a player or a guest' : 'Click a player' }));
+      slot.setAttribute('aria-label', `${where}: empty`);
     }
   });
-  const full = S.slots.every(Boolean);
+  const full = S.slots.length > 1 && S.slots.every(Boolean);
   const btn = $('#startSplit');
   btn.hidden = !full;
   $('#splitHint').textContent = full ? 'Starting in a moment. Click a screen to change it.' : 'Click a player for each screen. Click a filled screen to empty it.';
@@ -227,7 +254,7 @@ function startCountdown() {
   tick(); btn.focus();
 }
 function cancelCountdown() { if (S.countdown) clearTimeout(S.countdown); S.countdown = 0; }
-function launchSplit() { if (S.slots.every(Boolean)) { const players = [...S.slots]; play(players); } }
+function launchSplit() { if (S.slots.length > 1 && S.slots.every(Boolean)) { const players = [...S.slots]; play(players); } }
 
 /* ================= new player login: name + password, or an invite code ================= */
 let loginTab = 'password';
@@ -244,7 +271,7 @@ function setLoginTab(tab, why = '') {
 }
 function openLogin(name = '', why = '', tab = 'password') {
   $('#loginName').value = name || ''; $('#loginPass').value = ''; $('#inviteCode').value = ''; $('#invitePass').value = ''; $('#inviteCode').oninput(); $('#invitePass').oninput();
-  $('#loginGo').textContent = S.mode === 2 ? 'ADD TO SCREEN' : 'LOG IN & PLAY';
+  $('#loginGo').textContent = S.mode > 1 ? 'ADD TO SCREEN' : 'LOG IN & PLAY';
   openModal($('#loginModal'));
   setLoginTab(tab, why);
 }
@@ -390,11 +417,14 @@ function openLaunch(players) {
   $('#launchError').hidden = true;
   $('#launchCancel').hidden = false;
   $('#stageList').replaceChildren(...STAGES.map(([k, label]) => { const li = el('li', { textContent: label }); li.dataset.k = k; return li; }));
-  setTitle(players.length > 1 ? 'GET READY, BOTH!' : 'GETTING READY');
-  $('#launchSub').textContent = players.length > 1 ? `${players[0].person} on the left, ${players[1].person} on the right` : `Playing as ${players[0].person}`;
+  setTitle(readyTitle());
+  $('#launchSub').textContent = players.length > 1
+    ? players.map((p, i) => `${p.person} ${screenName(i, players.length).toLowerCase()}`).join(' · ')
+    : `Playing as ${players[0].person}`;
   setStage('check'); setBar(null, '');
   hopperAnim?.stop(); hopperAnim = startHopper($('#hopper'), S.players);
 }
+function readyTitle() { const n = S.players.length; return n > 2 ? `GET READY, ALL ${n}!` : n > 1 ? 'GET READY, BOTH!' : 'GETTING READY'; }
 function setTitle(t, color = '#ffffff') { $('#launchTitle').replaceChildren(pixelText(t, { scale: 5, color, shadow: '#0b1226' })); }
 function setStage(k, state = 'active') {
   let passed = true;
@@ -444,7 +474,9 @@ function launchError(err) {
   $('#launchCancel').hidden = true;
   $('#errTitle').replaceChildren(pixelText(f.title, { scale: 3, color: '#ffd1d6' }));
   $('#errText').textContent = f.message && f.message !== f.title && err?.code !== 'no_free_account' ? f.message : ''; // broker text for a full server talks about accounts
-  $('#errHint').textContent = f.hint;
+  // split-screen is all or nothing: the host gave back the seats already taken
+  $('#errHint').textContent = err?.code === 'no_free_account' && S.players.length > 1
+    ? `Not enough free seats for ${S.players.length} players; try fewer.` : f.hint;
   const act = $('#errAction');
   act.hidden = true;
   if (err?.code === 'home_network_only' || err?.code === 'invite_invalid' || err?.code === 'device_limit' || err?.code === 'password_too_short') {
@@ -516,7 +548,7 @@ async function play(players) {
     if (person && err.code !== 'device_token_invalid') { const p = S.saved.find((x) => sameName(x.person, person)); if (p) p.error = friendly(err).title.toLowerCase().replace(/^./, (c) => c.toUpperCase()); }
     launchError(err);
   } finally {
-    S.busy = false; S.slots = [null, null]; renderSlots(); renderCards(); pollStatus();
+    S.busy = false; S.slots = emptySlots(S.mode); renderSlots(); renderCards(); pollStatus();
   }
 }
 onEvent((m) => {
@@ -526,7 +558,7 @@ onEvent((m) => {
     case 'update':
       renderUpdate(m);
       // Play goes on with this version after a failed update: back to the normal launch title
-      if (S.busy && $('#launch').classList.contains('open')) { setTitle(S.players.length > 1 ? 'GET READY, BOTH!' : 'GETTING READY'); $('#launchCancel').hidden = false; }
+      if (S.busy && $('#launch').classList.contains('open')) { setTitle(readyTitle()); $('#launchCancel').hidden = false; }
       break;
     case 'phase':
       if (m.phase === 'update') { setTitle('UPDATING!'); $('#launchSub').textContent = `Updating UncleCraft… (v${m.version})`; setBar(null, 'Downloading the update…'); }
@@ -555,7 +587,7 @@ const Demo = {
     { person: 'Maya', lastPlayed: new Date(Date.now() - 4 * 86400e3).toISOString() },
   ],
   async call(type) {
-    if (type === 'init') return { configured: demo !== 'setup', settings: { server: '192.168.1.20', fingerprint: '12:34:56', soundOn: true, split: demo === 'split' }, saved: this.saved,
+    if (type === 'init') return { configured: demo !== 'setup', settings: { server: '192.168.1.20', fingerprint: '12:34:56', soundOn: true, playerCount: demo === 'split' ? 2 : 1, players: [] }, saved: this.saved,
       update: { state: demo === 'update' ? 'failed' : 'none', current: '0.2.3', notice: demo === 'update' ? "Couldn't check for updates." : null } };
     if (type === 'status') return { ok: true, testMode: demo === 'test', mode: demo === 'test' ? 'test' : demo === 'interim' ? 'interim' : 'approved', accounts: { total: 6, free: 4 }, features: ['guests'], playing: [{ person: 'Ben', account: 'PoolAccount3', state: 'online', platform: 'java', world: 'Skyreach' }, { person: 'Mia', account: '', state: 'online', platform: 'console', world: 'Skyreach' }, { person: 'Uncle', account: 'PoolAccount1', state: 'reserved' }] };
     return {};
@@ -567,9 +599,8 @@ async function boot() {
   if (demo) document.body.classList.add('shot'); // offscreen previews: skip entry animations
   renderPixelLabels();
   setupHero();
-  // only the 1/2-player toggle: the login tabs share the .mode-toggle look but have their own handler
+  // only the 1-4 player toggle: the login tabs share the .mode-toggle look but have their own handler
   $$('.mode-toggle button[data-mode]').forEach((b) => (b.onclick = () => { Sound.click(); setMode(Number(b.dataset.mode)); }));
-  $$('.slot').forEach((s) => (s.onclick = () => { const c = S.slots[Number(s.dataset.slot)]; if (c) choose(c); }));
   $$('[data-close]').forEach((b) => (b.onclick = () => { Sound.back(); closeModal(b.closest('.modal')); }));
   Nav.start(() => {
     const m = $('.modal.open'); if (m) { closeModal(m); Sound.back(); return; }
@@ -581,21 +612,37 @@ async function boot() {
   S.settings = r.settings; S.saved = r.saved; Sound.on = r.settings.soundOn !== false; S.features = new Set(r.features || []);
   renderUpdate(r.update);
   renderSoundBtn();
-  setMode(r.settings.split ? 2 : 1);
+  setMode(r.settings.playerCount || (r.settings.split ? 2 : 1));
   if (!r.configured) openSetup(false);
   await pollStatus();
   setInterval(() => { if (!document.hidden && !$('#setup').classList.contains('open')) pollStatus(); }, 5000);
   setInterval(() => renderCards.pending || (!S.busy && renderCards()), 60000); // refresh "played x ago"
   // demo screens for offscreen screenshots
-  if (demo === 'split') { S.slots = [{ kind: 'saved', person: 'Alice' }, null]; renderSlots(); renderCards(); }
-  if (demo === 'split2') { setMode(2); S.slots = [{ kind: 'saved', person: 'Alice' }, { kind: 'saved', person: 'Ben' }]; S.countdown = 1; renderSlots(); renderCards(); $('#startSplit').hidden = false; $('#startSplit').replaceChildren(pixelText('START SPLIT-SCREEN 2', { scale: 3, color: '#0b1226' })); }
+  // full screens: show the start button frozen at "2" instead of counting down into a launch
+  const demoSlots = (n, slots) => {
+    setMode(n); S.slots = slots; renumberGuests();
+    if (slots.every(Boolean)) S.countdown = 1;
+    renderSlots(); renderCards();
+    if (slots.every(Boolean)) { $('#startSplit').hidden = false; $('#startSplit').replaceChildren(pixelText('START SPLIT-SCREEN 2', { scale: 3, color: '#0b1226' })); }
+  };
+  const saved = (person) => ({ kind: 'saved', person }); const guest = { kind: 'guest', person: '' };
+  if (demo === 'split') demoSlots(2, [saved('Alice'), null]);
+  if (demo === 'split2') demoSlots(2, [saved('Alice'), saved('Ben')]);
+  if (demo === 'split3') demoSlots(3, [saved('Alice'), saved('Ben'), null]); // picking: one screen still empty
+  if (demo === 'split3full') demoSlots(3, [saved('Alice'), saved('Ben'), { ...guest }]);
+  if (demo === 'split4') demoSlots(4, [saved('Alice'), saved('Ben'), saved('Maya'), null]);
+  if (demo === 'split4full') demoSlots(4, [saved('Alice'), { ...guest }, saved('Ben'), { ...guest }]); // guests become Alice_P2, Alice_P3
+  if (demo === 'guest4') demoSlots(4, [saved('Alice'), { ...guest }, { ...guest }, { ...guest }]);
+  if (demo === 'launch3') { S.mode = 3; openLaunch([{ person: 'Alice' }, { person: 'Ben' }, { person: 'Alice_P2' }]); setStage('Mods'); setBar(0.8, "Host's mods: 40 MB of 50 MB  ·  9.0 MB/s  ·  12/15 files"); }
+  if (demo === 'launch4') { S.mode = 4; openLaunch([{ person: 'Alice' }, { person: 'Ben' }, { person: 'Maya' }, { person: 'Alice_P2' }]); setStage('login'); setBar(null, 'Signing in Maya…'); }
+  if (demo === 'full4') { S.mode = 4; openLaunch([{ person: 'Alice' }, { person: 'Alice_P2' }, { person: 'Alice_P3' }, { person: 'Alice_P4' }]); setStage('login'); launchError({ code: 'no_free_account', message: 'The server is full: not enough free seats for 4 players; try fewer.' }); }
   if (demo === 'launch') { openLaunch([{ person: 'Alice' }, { person: 'Ben' }]); setStage('Minecraft'); setBar(0.43, 'Minecraft: 212 MB of 489 MB  ·  18.4 MB/s  ·  1873/4120 files'); }
   if (demo === 'updating') { openLaunch([{ person: 'Alice' }]); setTitle('UPDATING!'); $('#launchSub').textContent = 'Updating UncleCraft… (v0.2.57)'; setBar(0.62, 'New UncleCraft: 32 MB of 52 MB  ·  8.1 MB/s'); }
   if (demo === 'error') { openLaunch([{ person: 'Test1' }]); setStage('login'); launchError({ code: 'no_free_account', message: 'The server is full right now.' }); }
   if (demo === 'setup2') { openSetup(true); $('#wzFingerprint').value = '12:34:56:78:9A:BC:DE:F0:12:34:56:78:9A:BC:DE:F0:12:34:56:78:9A:BC:DE:F0:12:34:56:78:9A:BC:DE:F0'; showStep(2); $('#wzFingerprint').oninput(); }
   if (demo === 'login') { openLogin(); }
-  if (demo === 'guest') { setMode(2); S.slots = [{ kind: 'saved', person: 'Alice' }, null]; renderSlots(); renderCards(); }
-  if (demo === 'guest2') { setMode(2); S.slots = [{ kind: 'saved', person: 'Alice' }, { kind: 'guest', person: 'Alice_P2' }]; S.countdown = 1; renderSlots(); renderCards(); $('#startSplit').hidden = false; $('#startSplit').replaceChildren(pixelText('START SPLIT-SCREEN 2', { scale: 3, color: '#0b1226' })); }
+  if (demo === 'guest') demoSlots(2, [saved('Alice'), null]);
+  if (demo === 'guest2') demoSlots(2, [saved('Alice'), { ...guest }]);
   if (demo === 'invite') { openLogin('', '', 'invite'); $('#inviteCode').value = '7k2mq9xd4hrt8wza'; $('#inviteCode').oninput(); }
 }
 boot();

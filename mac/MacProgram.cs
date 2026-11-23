@@ -110,14 +110,16 @@ public static class MacProgram
             try { w?.Invoke(() => w.SetMinimized(toNewVersion)); } catch (Exception e) { Log.Error("update handover failed", e); }
         }
 
-        public (int width, int height)? SplitSize()
+        /// <summary>Each game starts at its SplitLayout size on the launcher's monitor (40 pt less height for the title
+        /// bar); the players drag the windows into place, since the app can't move them.</summary>
+        public (int width, int height)? SplitSize(int index, int count)
         {
-            try
-            {
-                var area = _window!.MainMonitor.WorkArea;
-                return (area.Width / 2, area.Height - 40);
-            }
-            catch { return (960, 1000); }
+            if (count < 2) return null;
+            System.Drawing.Rectangle area;
+            try { var a = _window!.MainMonitor.WorkArea; area = new(a.X, a.Y, a.Width, a.Height); }
+            catch { area = new(0, 0, 1920, 1040); }
+            var r = SplitLayout.Rects(count, area)[Math.Clamp(index, 0, count - 1)];
+            return (Math.Max(320, r.Width), Math.Max(240, r.Height - 40));
         }
 
         public Task Arrange(IReadOnlyList<GameProcess> games) => Task.CompletedTask;

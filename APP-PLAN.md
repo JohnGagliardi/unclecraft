@@ -57,6 +57,12 @@ without the IP.
   "Guest of <P1>", named `<Person>_P2` by the broker, via `POST /api/v1/sessions/guest` with player 1's lease
   (`Broker.GuestSession`). Shown only when the broker's `GET /status` lists `features` `"guests"`. Classic window:
   "Player 2: guest" checkbox. Demos `?demo=guest`, `guest2`. Not yet tried end to end with a game.
+- **4-player split-screen: built, not tried with real controllers.** Settings `PlayerCount` (1-4) + `Players`
+  replace `SecondPlayer`/`Player2` (old files migrate to 2). 2 = top/bottom, 3 = top + two bottom quarters,
+  4 = 2x2 (`SplitLayout` in AppCore.cs, `WindowTiler.Tile` on Windows, launch size only on the Mac). Guests 2-4 via
+  repeated `POST /sessions/guest` (`_P2`-`_P4`); `no_free_account` part-way releases all and says "try fewer".
+  games/p2-p4 get Controllable `autoSelect = false` (no controller-index option exists). Not run against the test
+  broker yet. Demos `?demo=split3`, `split3full`, `split4`, `split4full`, `guest4`, `launch3`, `launch4`, `full4`.
 
 ## Next
 
