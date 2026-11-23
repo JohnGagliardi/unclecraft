@@ -105,6 +105,7 @@ public static class Updater
         // Follows GitHub's redirect to its release-files CDN (not the REST API, so no 60-an-hour limit).
         var h = new HttpClient { Timeout = TimeSpan.FromSeconds(15), MaxResponseContentBufferSize = 1_000_000 };
         h.DefaultRequestHeaders.UserAgent.ParseAdd($"UncleCraft/{InfoVersion}"); // generic: no personal data
+        h.DefaultRequestHeaders.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true }; // no stale latest/ from a proxy
         return h;
     }
 
@@ -136,7 +137,9 @@ public static class Updater
                 SaveCache(good.Value);
             }
             else _good = good;
-            return Last = Evaluate(good.Value.Manifest);
+            Last = Evaluate(good.Value.Manifest);
+            if (Last.State.StartsWith("available")) Log.Info($"update check: {Last.Release!.Version} is available ({(force ? "fresh" : "checked " + good.Value.At.ToString("HH:mm:ss") + "Z")})");
+            return Last;
         }
         finally { Gate.Release(); }
     }

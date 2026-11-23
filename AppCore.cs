@@ -169,6 +169,17 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
 
     private void SetNotice(string text) { _notice = text; _noticeSticky = true; }
 
+    /// <summary>
+    /// The check used right before installing. The 10-minute cache is fine for "nothing to do", but a cached "available"
+    /// may name a release that has since been replaced by a newer one (a check at 17:50 said 0.2.3, 0.2.5 came out at
+    /// 17:52, Play at 17:58 installed 0.2.3). So an update is only installed from a fresh look at GitHub.
+    /// </summary>
+    private async Task<UpdateCheck> CheckBeforeInstall()
+    {
+        var st = await CheckUpdate(false);
+        return st.State is "available" or "available-optout" ? await CheckUpdate(true) : st;
+    }
+
     /// <summary>Checks (cached 10 minutes unless forced) and tells the page: {event:"update", state, version, current, reason, notice}.</summary>
     private async Task<UpdateCheck> CheckUpdate(bool force)
     {
@@ -230,7 +241,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
         _busy = true;
         try
         {
-            var st = await CheckUpdate(false);
+            var st = await CheckBeforeInstall();
             if (st.State is "available" or "available-optout") await InstallUpdate(st.Release!);
             return UpdateJson(Updater.Last ?? st);
         }
@@ -379,7 +390,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
         _busy = true;
         try
         {
-            var upd = await CheckUpdate(false);
+            var upd = await CheckBeforeInstall();
             if (upd.State == "available") await InstallUpdate(upd.Release!);
         }
         finally { _busy = false; }
