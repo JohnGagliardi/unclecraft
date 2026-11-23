@@ -16,8 +16,6 @@ public sealed class RememberedLogin
     public string ProtectedToken { get; set; } = "";
     public DateTime SavedAt { get; set; }
     public DateTime? LastPlayed { get; set; }
-    /// <summary>Linked to a Microsoft account, as the host said at the last login (null: not known yet).</summary>
-    public bool? Linked { get; set; }
 }
 
 public static class RememberedStore
@@ -48,7 +46,7 @@ public static class RememberedStore
         var old = list.Where(r => r.Host == host && r.Person.Equals(person, StringComparison.OrdinalIgnoreCase)).ToList();
         foreach (var r in old) SecretStore.Delete(r.ProtectedToken);
         list.RemoveAll(old.Contains);
-        list.Add(new RememberedLogin { Host = host, Person = person, DeviceId = deviceId, ProtectedToken = stored, SavedAt = DateTime.Now, LastPlayed = old.FirstOrDefault()?.LastPlayed, Linked = old.FirstOrDefault()?.Linked });
+        list.Add(new RememberedLogin { Host = host, Person = person, DeviceId = deviceId, ProtectedToken = stored, SavedAt = DateTime.Now, LastPlayed = old.FirstOrDefault()?.LastPlayed });
         Save(list);
     }
 
@@ -56,15 +54,6 @@ public static class RememberedStore
     {
         var list = All();
         foreach (var r in list.Where(r => r.Host == host && r.Person.Equals(person, StringComparison.OrdinalIgnoreCase))) r.LastPlayed = DateTime.Now;
-        Save(list);
-    }
-
-    public static void SetLinked(string host, string person, bool linked)
-    {
-        var list = All();
-        var hit = list.Where(r => r.Host == host && r.Person.Equals(person, StringComparison.OrdinalIgnoreCase) && r.Linked != linked).ToList();
-        if (hit.Count == 0) return;
-        foreach (var r in hit) r.Linked = linked;
         Save(list);
     }
 

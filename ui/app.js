@@ -26,7 +26,7 @@ if (host) host.listen((m) => {
 });
 
 /* ================= state ================= */
-const S = { settings: {}, saved: [], mode: 1, slots: [null, null], status: null, busy: false, players: [], countdown: 0, features: new Set(), linkOffer: null };
+const S = { settings: {}, saved: [], mode: 1, slots: [null, null], status: null, busy: false, players: [], countdown: 0, features: new Set() };
 
 /* ================= friendly errors ================= */
 const ERRORS = {
@@ -53,16 +53,7 @@ const ERRORS = {
   bad_manifest: ["HOST'S MOD LIST IS BROKEN", "One of the host's mods has a bad file name. Tell the host."],
   server_closed: ['SERVER CLOSED FOR THE NIGHT', 'Quiet hours: the server sleeps overnight. Come back after it reopens.'],
   update_quit_game: ['QUIT MINECRAFT FIRST', 'A new UncleCraft is ready. Quit Minecraft, then press Play again to update.'],
-  // Microsoft sign-in and guests (the broker's message is shown above the hint)
-  not_approved: ['ASK THE HOST TO LET YOU IN', "Your Microsoft account is on the host's waiting list now. Once the host lets you in, sign in again."],
-  xuid_taken: ['ALREADY LINKED TO SOMEONE', 'That Microsoft account belongs to another player here. Sign in with your own account, or ask the host.'],
-  xbox_blocked: ['XBOX SAID NO', "Kids' accounts often need a parent to allow it in the Xbox family settings first. Until then, ask the host for an invite code."],
-  ms_declined: ['SIGN-IN CANCELLED', "The sign-in was turned down on Microsoft's page. Try again if that was a mistake."],
-  ms_expired: ['THE CODE EXPIRED', 'A code only works for a few minutes. Try again for a new one.'],
-  flow_unknown: ['START AGAIN', 'That sign-in is finished or unknown. Try again for a new code.'],
-  use_microsoft: ['SIGN IN WITH MICROSOFT', 'The host switched passwords and invite codes off for you. Use Sign in with Microsoft on the New player card.'],
-  link_needs_game: ['START THE GAME FIRST', 'Link your Microsoft account while your game is running.'],
-  guest_needs_microsoft: ['LINK MICROSOFT FIRST', 'Player 1 needs to link Microsoft first. Then a guest can play next to them, or pick a saved player for the right screen.'],
+  // split-screen guests (the broker's message is shown above the hint)
   guest_in_use: ['GUEST ALREADY PLAYING', 'Player 1 already has a guest playing. Close that game first, or pick a saved player for the right screen.'],
 };
 function friendly(err) {
@@ -88,10 +79,6 @@ function el(tag, props = {}, ...kids) { const e = document.createElement(tag); O
 function openModal(m) { m.classList.add('open'); setTimeout(() => (m.querySelector('[autofocus], input, [data-nav]'))?.focus(), 30); }
 function closeModal(m) { m.classList.remove('open'); }
 function sameName(a, b) { return a && b && a.toLowerCase() === b.toLowerCase(); }
-function copyText(t) {
-  try { navigator.clipboard.writeText(t).catch(() => copyFallback(t)); } catch { copyFallback(t); }
-}
-function copyFallback(t) { const a = el('textarea', { value: t }); document.body.append(a); a.select(); try { document.execCommand('copy'); } catch { /* ignore */ } a.remove(); }
 
 /* ================= icons (pixel art) ================= */
 function iconSvg(rows, color) {
@@ -115,17 +102,20 @@ function setupHero() {
 function renderSoundBtn() { $('#soundBtn').replaceChildren(iconSvg(Sound.on ? ICON_SOUND : ICON_MUTE, Sound.on ? '#8ae234' : '#a9b6d8')); }
 
 /* ================= player cards ================= */
-/** Split-screen with "guests" on the host and a Microsoft-linked player 1: "Guest of <player 1>" is offered first. */
+/**
+ * Split-screen with "guests" on the host and any player 1 chosen (saved, password or invite): "Guest of <player 1>" is
+ * offered first. Returns { of, name } or null. An invite's real name only comes from the host at login.
+ */
 function guestHost() {
   const p1 = S.slots[0];
-  if (S.mode !== 2 || !S.features.has('guests') || p1?.kind !== 'saved') return null;
-  return S.saved.find((p) => sameName(p.person, p1.person))?.linked ? p1.person : null;
+  if (S.mode !== 2 || !S.features.has('guests') || !p1 || p1.kind === 'guest') return null;
+  return p1.kind === 'invite' ? { of: 'player 1', name: 'Guest' } : { of: p1.person, name: `${p1.person}_P2` };
 }
 function renderCards() {
   const box = $('#cards'); box.replaceChildren();
-  const gh = guestHost();
-  if (gh) {
-    const name = `${gh}_P2`; const slotted = S.slots[1]?.kind === 'guest';
+  const guest = guestHost();
+  if (guest) {
+    const { of: gh, name } = guest; const slotted = S.slots[1]?.kind === 'guest';
     const card = el('button', { className: 'card guest' + (S.busy ? ' busy' : '') + (slotted ? ' slotted' : '') });
     card.dataset.nav = ''; card.setAttribute('role', 'listitem'); card.setAttribute('aria-label', `Player 2: guest of ${gh}`);
     if (slotted) card.dataset.slotname = 'RIGHT';
@@ -159,7 +149,7 @@ function renderCards() {
   }
   const add = el('button', { className: 'card new' + (S.busy ? ' busy' : '') });
   add.dataset.nav = ''; add.setAttribute('aria-label', 'New player: log in with name and password');
-  add.append(el('span', { className: 'plus', textContent: '+' }), el('span', { className: 'name', textContent: 'New player' }), el('span', { className: 'when', textContent: S.features.has('microsoft') ? 'Microsoft, password or invite' : 'Password or invite code' }));
+  add.append(el('span', { className: 'plus', textContent: '+' }), el('span', { className: 'name', textContent: 'New player' }), el('span', { className: 'when', textContent: 'Password or invite code' }));
   add.onclick = () => { Sound.click(); openLogin(); };
   box.append(add);
   if (!S.saved.length) box.prepend(el('div', { className: 'empty-hint', textContent: 'No saved players on this PC yet. Log in once and you\'ll get a one-click card.' }));
@@ -254,7 +244,6 @@ function setLoginTab(tab, why = '') {
 function openLogin(name = '', why = '', tab = 'password') {
   $('#loginName').value = name || ''; $('#loginPass').value = ''; $('#inviteCode').value = ''; $('#invitePass').value = ''; $('#inviteCode').oninput(); $('#invitePass').oninput();
   $('#loginGo').textContent = S.mode === 2 ? 'ADD TO SCREEN' : 'LOG IN & PLAY';
-  $('#msChoice').hidden = !S.features.has('microsoft');
   openModal($('#loginModal'));
   setLoginTab(tab, why);
 }
@@ -294,63 +283,13 @@ $('#loginForm').onsubmit = (e) => {
   $('#loginPass').value = '';
 };
 
-/* ================= Microsoft sign-in (the broker runs the device code; only Microsoft's page sees the password) ================= */
-let ms = null; // the sign-in on screen: { link, person, code }
-$('#msSignIn').onclick = () => { Sound.click(); closeModal($('#loginModal')); msBegin(); };
-async function msBegin(opts = {}) {
-  const my = ms = { ...opts };
-  $('#msTitle').replaceChildren(pixelText(opts.link ? 'LINK MICROSOFT' : 'SIGN IN WITH MICROSOFT', { scale: 3, shadow: '#0b1226' }));
-  $('#msBody').hidden = false; $('#msError').hidden = true; $('#msRetry').hidden = true;
-  $('#msCode').textContent = '········'; $('#msOpen').disabled = true; $('#msWaitText').textContent = 'Getting a code…';
-  openModal($('#msModal'));
-  try {
-    const r = await call('msStart', opts.link ? { link: true, person: opts.person } : {});
-    if (ms !== my) return;
-    my.code = r.userCode;
-    $('#msCode').textContent = r.userCode; $('#msOpen').disabled = false; $('#msOpen').focus();
-    $('#msWaitText').textContent = 'Waiting for you to sign in…';
-    const done = await call('msPoll', { flowId: r.flowId, interval: r.interval, expiresIn: r.expiresIn });
-    if (ms !== my) return;
-    ms = null; closeModal($('#msModal')); Sound.success();
-    toast(done.linked ? `${done.person} is linked to Microsoft${done.gamertag ? ` (${done.gamertag})` : ''}.` : `Welcome, ${done.person}! Click your card to play.`);
-  } catch (e) {
-    if (ms !== my || e?.code === 'cancelled') return;
-    msError(e);
-  }
-}
-function msError(e) {
-  const f = friendly(e);
-  $('#msBody').hidden = true; $('#msError').hidden = false; $('#msRetry').hidden = false;
-  $('#msErrTitle').replaceChildren(pixelText(f.title, { scale: 3, color: '#ffd1d6' }));
-  $('#msErrText').textContent = f.message && f.message !== f.title ? f.message : '';
-  $('#msErrHint').textContent = f.hint;
-  $('#msRetry').focus(); Sound.error();
-}
-function msClose() { if (ms) { ms = null; call('msCancel').catch(() => {}); } closeModal($('#msModal')); }
-$('#msOpen').onclick = () => {
-  if (!ms?.code) return;
-  Sound.click(); copyText(ms.code);
-  call('msOpen').then(() => toast("Code copied. Paste it on Microsoft's page.")).catch((e) => toast(friendly(e).title, true));
-};
-$('#msCancel').onclick = () => { Sound.back(); msClose(); };
-$('#msRetry').onclick = () => { Sound.click(); const o = ms || {}; msBegin({ link: o.link, person: o.person }); };
-function showLinkOffer() {
-  const person = S.linkOffer; S.linkOffer = null;
-  if (!person) return;
-  $('#linkTitle').textContent = `Link ${person} to Microsoft?`;
-  $('#linkText').textContent = `Sign in once with ${person}'s own Microsoft (Xbox) account. Worlds and inventory stay the same, and it lets a guest play split-screen with you. We only ask once.`;
-  openModal($('#linkModal'));
-  $('#linkNo').onclick = () => { Sound.back(); closeModal($('#linkModal')); };
-  $('#linkYes').onclick = () => { Sound.click(); closeModal($('#linkModal')); msBegin({ link: true, person }); };
-}
-
 /* ================= server panel ================= */
 async function pollStatus() {
   try { S.status = await call('status'); } catch (e) { S.status = { ok: false, error: e }; }
   if (S.status.ok) setFeatures(S.status.features);
   renderServer();
 }
-/** Optional broker features ("microsoft", "guests"): an older broker lists none, and the page looks as before. */
+/** Optional broker features ("guests"): an older broker lists none, and the page looks as before. */
 function setFeatures(list) {
   const f = new Set(list || []);
   if ([...f].sort().join() === [...S.features].sort().join()) return;
@@ -513,9 +452,6 @@ function launchError(err) {
   } else if (err?.code === 'device_token_invalid' || err?.code === 'bad_credentials') {
     act.hidden = false; act.textContent = 'LOG IN AGAIN';
     act.onclick = () => { closeLaunch(); openLogin(err.person && !String(err.person).startsWith('Invite ') ? err.person : '', f.hint); };
-  } else if (err?.code === 'use_microsoft') {
-    act.hidden = false; act.textContent = 'SIGN IN WITH MICROSOFT';
-    act.onclick = () => { closeLaunch(); msBegin(); };
   } else if (err?.code === 'unreachable' || err?.code === 'bad_fingerprint') {
     act.hidden = false; act.textContent = 'SETTINGS';
     act.onclick = () => { closeLaunch(); openSetup(true); };
@@ -525,7 +461,7 @@ function launchError(err) {
   setTimeout(() => (act.hidden ? $('#errBack') : act).focus(), 50);
   Sound.error();
 }
-function closeLaunch() { $('#launch').classList.remove('open'); hopperAnim?.stop(); hopperAnim = null; if (S.linkOffer) setTimeout(showLinkOffer, 300); }
+function closeLaunch() { $('#launch').classList.remove('open'); hopperAnim?.stop(); hopperAnim = null; }
 /** Back key or the CANCEL button: stops the download/sign-in/wake-up part of a launch. */
 function cancelLaunch() {
   if (!S.busy || !$('#launch').classList.contains('open') || $('#launchCancel').hidden) return;
@@ -605,10 +541,6 @@ onEvent((m) => {
       break;
     case 'saved': S.saved = m.saved; renderCards(); break;
     case 'closed': toast(`${m.person}'s game closed. ${m.account} is free again.`); pollStatus(); break;
-    case 'linkOffer': S.linkOffer = m.person; if (!$('#launch').classList.contains('open')) showLinkOffer(); break; // else when the launch screen closes
-    case 'msWait':
-      if (ms) { const s = Math.max(0, m.secondsLeft | 0); $('#msWaitText').textContent = `Waiting for you to sign in… (the code works ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} more)`; }
-      break;
   }
 });
 
@@ -616,17 +548,15 @@ onEvent((m) => {
 const Demo = {
   saved: [
     { person: 'Test1', lastPlayed: new Date(Date.now() - 2 * 3600e3).toISOString() },
-    { person: 'Alice', lastPlayed: new Date(Date.now() - 86400e3).toISOString(), linked: true },
+    { person: 'Alice', lastPlayed: new Date(Date.now() - 86400e3).toISOString() },
     { person: 'Ben', lastPlayed: new Date(Date.now() - 5 * 60e3).toISOString() },
     { person: 'Grandpa Joe', lastPlayed: null },
     { person: 'Maya', lastPlayed: new Date(Date.now() - 4 * 86400e3).toISOString() },
   ],
   async call(type) {
-    if (type === 'msStart') return { flowId: 'demo', userCode: 'F9XQ2LMB', verificationUri: 'https://www.microsoft.com/link', expiresIn: 900, interval: 5 };
-    if (type === 'msPoll') return new Promise(() => {}); // waits forever: the code screen stays up
     if (type === 'init') return { configured: demo !== 'setup', settings: { server: '192.168.1.20', fingerprint: '12:34:56', soundOn: true, split: demo === 'split' }, saved: this.saved,
       update: { state: demo === 'update' ? 'failed' : 'none', current: '0.2.3', notice: demo === 'update' ? "Couldn't check for updates." : null } };
-    if (type === 'status') return { ok: true, testMode: demo === 'test', mode: demo === 'test' ? 'test' : demo === 'interim' ? 'interim' : 'approved', accounts: { total: 6, free: 4 }, features: ['microsoft', 'guests'], playing: [{ person: 'Ben', account: 'PoolAccount3', state: 'online', platform: 'java', world: 'Skyreach' }, { person: 'Mia', account: '', state: 'online', platform: 'console', world: 'Skyreach' }, { person: 'Uncle', account: 'PoolAccount1', state: 'reserved' }] };
+    if (type === 'status') return { ok: true, testMode: demo === 'test', mode: demo === 'test' ? 'test' : demo === 'interim' ? 'interim' : 'approved', accounts: { total: 6, free: 4 }, features: ['guests'], playing: [{ person: 'Ben', account: 'PoolAccount3', state: 'online', platform: 'java', world: 'Skyreach' }, { person: 'Mia', account: '', state: 'online', platform: 'console', world: 'Skyreach' }, { person: 'Uncle', account: 'PoolAccount1', state: 'reserved' }] };
     return {};
   },
 };
@@ -641,7 +571,7 @@ async function boot() {
   $$('.slot').forEach((s) => (s.onclick = () => { const c = S.slots[Number(s.dataset.slot)]; if (c) choose(c); }));
   $$('[data-close]').forEach((b) => (b.onclick = () => { Sound.back(); closeModal(b.closest('.modal')); }));
   Nav.start(() => {
-    const m = $('.modal.open'); if (m) { if (m.id === 'msModal') msClose(); else closeModal(m); Sound.back(); return; }
+    const m = $('.modal.open'); if (m) { closeModal(m); Sound.back(); return; }
     if ($('#setup').classList.contains('open') && S.settings.server) { $('#setup').classList.remove('open'); return; }
     if (!$('#launchError').hidden) closeLaunch();
     else cancelLaunch();
@@ -663,9 +593,6 @@ async function boot() {
   if (demo === 'error') { openLaunch([{ person: 'Test1' }]); setStage('login'); launchError({ code: 'no_free_account', message: 'The server is full right now.' }); }
   if (demo === 'setup2') { openSetup(true); $('#wzFingerprint').value = '12:34:56:78:9A:BC:DE:F0:12:34:56:78:9A:BC:DE:F0:12:34:56:78:9A:BC:DE:F0:12:34:56:78:9A:BC:DE:F0'; showStep(2); $('#wzFingerprint').oninput(); }
   if (demo === 'login') { openLogin(); }
-  if (demo === 'microsoft') { msBegin(); }
-  if (demo === 'mserror') { msBegin(); setTimeout(() => msError({ code: 'xbox_blocked', message: 'This is a child account. An adult needs to add it to a Microsoft family first.' }), 50); }
-  if (demo === 'link') { S.linkOffer = 'Ben'; showLinkOffer(); }
   if (demo === 'guest') { setMode(2); S.slots = [{ kind: 'saved', person: 'Alice' }, null]; renderSlots(); renderCards(); }
   if (demo === 'guest2') { setMode(2); S.slots = [{ kind: 'saved', person: 'Alice' }, { kind: 'guest', person: 'Alice_P2' }]; S.countdown = 1; renderSlots(); renderCards(); $('#startSplit').hidden = false; $('#startSplit').replaceChildren(pixelText('START SPLIT-SCREEN 2', { scale: 3, color: '#0b1226' })); }
   if (demo === 'invite') { openLogin('', '', 'invite'); $('#inviteCode').value = '7k2mq9xd4hrt8wza'; $('#inviteCode').oninput(); }

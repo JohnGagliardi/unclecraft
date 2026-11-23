@@ -52,20 +52,11 @@ without the IP.
 
 ## In progress
 
-- **Microsoft sign-in + guests (Track A): built, not committed, not tried against a broker.** Spec:
-  `REAL-ACCOUNTS-PLAN.md` (API contract). Shown only when the broker's `GET /status` lists `features`
-  `"microsoft"` / `"guests"`, so an older broker looks as before.
-  - `Broker.cs`: `MicrosoftStart` (optional bearer lease = link), `MicrosoftPoll`, `GuestSession`, `Features()`;
-    `Lease` gains `MicrosoftLinked` and `GuestOf`.
-  - `AppCore.cs`: bridge `msStart`, `msOpen` (opens only https microsoft.com/live.com), `msPoll` (loop, 429 waits
-    `retryAfterSeconds`), `msCancel`; events `msWait` and `linkOffer` (once per person and host, in
-    `Settings.MicrosoftLinkAsked`); player choice `{kind:"guest"}` after player 1. `features` in init/setup.
-  - `Remembered.cs`: `Linked` per saved person (from each login answer). Microsoft device tokens are saved like invite
-    ones.
-  - UI: Microsoft button on New player, the code screen, the link offer, the "Guest of <P1>" card. Demos:
-    `?demo=microsoft`, `mserror`, `link`, `guest`, `guest2`.
-  - Classic window: "Sign in with Microsoft" button and a "Player 2: guest" checkbox.
-  - To try: a broker with the new endpoints on test ports, then sign in, link, and run a guest split-screen.
+- **Microsoft sign-in removed 2026-11-23** (no Azure app yet; the plan is kept in `REAL-ACCOUNTS-PLAN.md`).
+  **Split-screen guests stay, for any approved person** (invite, password or saved device): player 2 is
+  "Guest of <P1>", named `<Person>_P2` by the broker, via `POST /api/v1/sessions/guest` with player 1's lease
+  (`Broker.GuestSession`). Shown only when the broker's `GET /status` lists `features` `"guests"`. Classic window:
+  "Player 2: guest" checkbox. Demos `?demo=guest`, `guest2`. Not yet tried end to end with a game.
 
 ## Next
 

@@ -1,5 +1,7 @@
 # Plan: PC players on their own Microsoft accounts, with Bedrock-style split-screen guests
 
+**2026-11-23: Microsoft sign-in reverted in the app and broker (no Azure app yet). Split-screen guests kept, for any approved person (invite, password or device). The rest is parked until there is an Azure app.**
+
 Status (2026-11-23): **decided; Track A is being built.** The broker goes first. Only test setups are used: no live
 broker deploy or restart, and no app push or release, until the user OKs each one. Written by the App session; the
 broker and plugin pieces belong to the Broker session.

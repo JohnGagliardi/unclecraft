@@ -21,9 +21,6 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
     private readonly CheckBox _remember1 = new() { Text = "Remember me on this PC", AutoSize = true, Checked = true };
     private readonly Button _play = new() { Text = "Log in and play", Width = 160, Height = 34 };
     private readonly Button _cancel = new() { Text = "Cancel", Width = 90, Height = 34, Enabled = false };
-    private readonly Button _msSignIn = new() { Text = "Sign in with Microsoft", AutoSize = true, MinimumSize = new Size(0, 34), Visible = false };
-    private readonly Button _msOpen = new() { Text = "Copy code && open Microsoft", AutoSize = true, MinimumSize = new Size(0, 34), Visible = false };
-    private readonly Label _msCode = new() { AutoSize = true, Font = new Font("Consolas", 22f, FontStyle.Bold), Visible = false };
     private readonly CheckBox _second = new() { Text = "Two players on this PC (split-screen)", AutoSize = true };
     private readonly CheckBox _guest = new() { Text = "Player 2: guest of player 1 (no account needed)", AutoSize = true, Checked = true, Visible = false };
     private readonly Label _secondHint = new() { AutoSize = true, ForeColor = SystemColors.GrayText };
@@ -37,8 +34,7 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
     private int _players; // in the current launch
     private bool _busy;
     private bool _testMode;
-    private HashSet<string> _features = []; // from the broker's status: "microsoft", "guests"
-    private bool _msBusy;
+    private HashSet<string> _features = []; // from the broker's status: "guests"
 
     public MainForm()
     {
@@ -72,10 +68,7 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
         var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
         buttons.Controls.Add(_play);
         buttons.Controls.Add(_cancel);
-        buttons.Controls.Add(_msSignIn);
         Wide(buttons);
-        Wide(_msCode);
-        Wide(_msOpen);
         Wide(_bar);
         Wide(_status);
         Controls.Add(t);
@@ -86,12 +79,6 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
             try { await Call("setMode", new JsonObject { ["split"] = _second.Checked }); } catch { /* only a preference */ }
         };
         _guest.CheckedChanged += (_, _) => UpdateHint();
-        _msSignIn.Click += async (_, _) => await MicrosoftSignIn(null);
-        _msOpen.Click += async (_, _) =>
-        {
-            try { Clipboard.SetText(_msCode.Text); } catch { /* clipboard busy: the code is on screen */ }
-            try { await Call("msOpen"); } catch (UiError e) { Status(e.Message); }
-        };
         _name1.TextChanged += (_, _) => UpdateInvite();
         _play.Click += async (_, _) =>
         {
@@ -153,40 +140,7 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
     private void SetFeatures(JsonNode? features)
     {
         _features = BrokerClient.Features(new JsonObject { ["features"] = features?.DeepClone() });
-        _msSignIn.Visible = _features.Contains("microsoft");
         UpdateHint();
-    }
-
-    /// <summary>Microsoft sign-in (or, with a person, linking that person): show the code, open Microsoft's page, wait.</summary>
-    private async Task MicrosoftSignIn(string? linkPerson)
-    {
-        if (_busy || _msBusy) return;
-        _msBusy = true;
-        _msSignIn.Enabled = false;
-        try
-        {
-            if (linkPerson == null)
-            {
-                var setup = await Call("setup", new JsonObject { ["server"] = _server.Text, ["fingerprint"] = _fingerprint.Text });
-                SetSaved(setup?["saved"]);
-            }
-            var d = await Call("msStart", linkPerson == null ? null : new JsonObject { ["link"] = true, ["person"] = linkPerson });
-            _msCode.Text = d?["userCode"]?.GetValue<string>() ?? "";
-            _msCode.Visible = _msOpen.Visible = true;
-            _cancel.Enabled = true;
-            Status("Click \"Copy code & open Microsoft\", sign in on Microsoft's page with your own account, then enter this code. UncleCraft never sees your password.");
-            var r = await Call("msPoll", new JsonObject { ["flowId"] = d?["flowId"]?.DeepClone(), ["interval"] = d?["interval"]?.DeepClone(), ["expiresIn"] = d?["expiresIn"]?.DeepClone() });
-            var person = r?["person"]?.GetValue<string>() ?? "";
-            Status(r?["linked"]?.GetValue<bool>() == true ? $"{person} is linked to Microsoft." : $"Welcome, {person}! Click your name above to play.");
-        }
-        catch (UiError e) { Status(e.Code == "cancelled" ? "Stopped." : e.Message); }
-        finally
-        {
-            _msBusy = false;
-            _msSignIn.Enabled = true;
-            _msCode.Visible = _msOpen.Visible = false;
-            if (!_busy) _cancel.Enabled = false;
-        }
     }
 
     // ---------------- talking to AppCore ----------------
@@ -232,14 +186,6 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
             case "update": if (m["notice"]?.GetValue<string>() is { } notice) Status(notice); break;
             case "saved": _pass1.Clear(); _invitePass.Clear(); SetSaved(m["saved"]); break; // logins are done
             case "closed": Status($"{Str(m, "person")}'s game closed; account {Str(m, "account")} is free again."); break;
-            case "linkOffer": // once per person: offer linking while their game runs
-                var who = Str(m, "person");
-                BeginInvoke(async () =>
-                {
-                    if (MessageBox.Show($"Link {who} to their own Microsoft (Xbox) account? Worlds and inventory stay the same, and it lets a guest play split-screen. We only ask once.",
-                            AppName, MessageBoxButtons.YesNo) == DialogResult.Yes) await MicrosoftSignIn(who);
-                });
-                break;
             case "phase":
                 switch (m["phase"]?.GetValue<string>())
                 {
@@ -399,7 +345,6 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
         _play.Enabled = on;
         _second.Enabled = on;
         _guest.Enabled = on;
-        _msSignIn.Enabled = on && !_msBusy;
         _server.Enabled = on;
         _fingerprint.Enabled = on;
         foreach (Control row in _saved.Controls) row.Enabled = on;

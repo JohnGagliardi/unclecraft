@@ -68,10 +68,6 @@
 <div id="loginModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
   <form id="loginForm" class="modal-card">
     <div id="loginTitle" data-px="NEW PLAYER" data-px-scale="3" data-px-shadow="#0b1226"></div>
-    <div id="msChoice" class="ms-choice" hidden>
-      <button type="button" id="msSignIn" class="btn ms" data-nav>SIGN IN WITH MICROSOFT</button>
-      <div class="small muted">Use your own Microsoft (Xbox) account. Or use a password or invite code from the host:</div>
-    </div>
     <div class="mode-toggle login-tabs" role="tablist">
       <button type="button" data-tab="password" data-nav role="tab">NAME + PASSWORD</button>
       <button type="button" data-tab="invite" data-nav role="tab">I HAVE AN INVITE CODE</button>
@@ -93,41 +89,6 @@
       <button type="submit" id="loginGo" class="btn go" data-nav>LOG IN &amp; PLAY</button>
     </div>
   </form>
-</div>
-
-<!-- Microsoft sign-in: the code from the broker, entered on Microsoft's own page -->
-<div id="msModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="msTitle">
-  <div class="modal-card ms-card">
-    <div id="msTitle" class="ms-title"></div>
-    <div id="msBody">
-      <div id="msCode" class="ms-code" aria-label="Your sign-in code"></div>
-      <button type="button" id="msOpen" class="btn go ms-open" data-nav>COPY CODE &amp; OPEN MICROSOFT</button>
-      <p class="muted">Sign in on Microsoft's page with your own account, then enter this code. UncleCraft never sees your password.</p>
-      <div class="ms-wait"><span class="spinner" aria-hidden="true"></span><span id="msWaitText">Waiting for you to sign in…</span></div>
-      <p class="small muted">Only enter a code this window shows you. Never type in a code someone else sends you.</p>
-    </div>
-    <div id="msError" class="launch-error" hidden>
-      <div id="msErrTitle"></div>
-      <p id="msErrText"></p>
-      <p id="msErrHint" class="muted"></p>
-    </div>
-    <div class="row center">
-      <button type="button" class="btn ghost" id="msCancel" data-nav>Cancel</button>
-      <button type="button" class="btn go" id="msRetry" data-nav hidden>TRY AGAIN</button>
-    </div>
-  </div>
-</div>
-
-<!-- one-time offer: link a password/invite person to their Microsoft account -->
-<div id="linkModal" class="modal" role="dialog" aria-modal="true">
-  <div class="modal-card">
-    <div id="linkTitle" class="modal-title"></div>
-    <p id="linkText" class="muted"></p>
-    <div class="row">
-      <button type="button" class="btn ghost" id="linkNo" data-nav>Not now</button>
-      <button type="button" class="btn ms" id="linkYes" data-nav>LINK MICROSOFT</button>
-    </div>
-  </div>
 </div>
 
 <!-- confirm -->

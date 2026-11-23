@@ -36,10 +36,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
     private string? _notice; // update notice for the home screen (null = none)
     private bool _noticeSticky; // set by an update attempt: a later check doesn't clear it
     private bool _trialWatch;
-    private HashSet<string> _features = []; // optional broker features from the last GET /status ("microsoft", "guests")
-    private readonly Dictionary<string, Lease> _active = new(StringComparer.OrdinalIgnoreCase); // person -> lease of a running game
-    private CancellationTokenSource? _msCts; // a Microsoft sign-in being polled
-    private string? _msUri; // verificationUri of the current Microsoft sign-in (msOpen opens only this)
+    private HashSet<string> _features = []; // optional broker features from the last GET /status ("guests")
 
     /// <summary>Games still running (the host asks before closing).</summary>
     public int Running => _running;
@@ -71,10 +68,6 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
                 "forget" => await Forget(m),
                 "play" => await Play(m),
                 "cancel" => CancelPlay(),
-                "msStart" => await MsStart(m),
-                "msOpen" => MsOpen(),
-                "msPoll" => await MsPoll(m),
-                "msCancel" => MsCancel(),
                 "checkUpdate" => UpdateJson(await CheckUpdate(true)),
                 "applyUpdate" => await ApplyUpdate(),
                 _ => throw new UiError("error", $"Unknown request {type}"),
@@ -129,7 +122,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
         var arr = new JsonArray();
         if (key == null) return arr;
         foreach (var r in RememberedStore.ForHost(key))
-            arr.Add(new JsonObject { ["person"] = r.Person, ["lastPlayed"] = r.LastPlayed?.ToUniversalTime().ToString("o"), ["linked"] = r.Linked });
+            arr.Add(new JsonObject { ["person"] = r.Person, ["lastPlayed"] = r.LastPlayed?.ToUniversalTime().ToString("o") });
         return arr;
     }
 
@@ -423,7 +416,6 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
                 // a guest needs player 1's lease: player 1 is always logged in first
                 var lease = c is GuestChoice ? await broker.GuestSession(leases[0], cts.Token) : await Logins.LoginAs(broker, c, hostKey);
                 leases.Add(lease);
-                if (lease.GuestOf == null && lease.MicrosoftLinked is { } linked) RememberedStore.SetLinked(hostKey, lease.Person, linked);
                 Log.Info($"lease: {lease.Person} on {lease.AccountName}{(lease.GuestOf != null ? $" (guest of {lease.GuestOf})" : "")}");
             }
             Event("saved", new JsonObject { ["saved"] = SavedJson() });
@@ -455,7 +447,6 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
                 catch { conn?.Dispose(); lock (_slots) _slots.Remove(slot); throw; }
                 games.Add(gp);
                 if (lease.GuestOf == null) RememberedStore.Touch(hostKey, lease.Person);
-                lock (_active) _active[lease.Person] = lease;
                 _ = Watch(broker, lease, gp, conn);
                 leases.Remove(lease); // owned by Watch() now
                 if (i == 0 && started.Count > 1) await Task.Delay(10_000); // stagger startup
@@ -475,7 +466,6 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
             }
             await windows.Arrange(games);
             Event("phase", new JsonObject { ["phase"] = "ingame" });
-            OfferLinks(hostKey, started);
             return null;
         }
         catch (BrokerException e)
@@ -515,140 +505,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
     private JsonNode? CancelPlay()
     {
         try { _playCts?.Cancel(); } catch (ObjectDisposedException) { /* Play just finished */ }
-        MsCancel();
         return null;
-    }
-
-    // ---------------- Microsoft sign-in (device code, run by the broker) ----------------
-
-    private static string LinkAskedKey(string hostKey, string person) => $"{hostKey}/{person.ToLowerInvariant()}";
-
-    /// <summary>
-    /// Once per person and host: a signed-in person the host reports as not linked gets {event:"linkOffer", person}
-    /// (only on a broker with "microsoft"). Sent once the games are up, so the lease msStart link=true needs is live.
-    /// </summary>
-    private void OfferLinks(string hostKey, IEnumerable<Lease> leases)
-    {
-        if (!_features.Contains("microsoft")) return;
-        foreach (var l in leases.Where(l => l.GuestOf == null && l.MicrosoftLinked == false))
-        {
-            var k = LinkAskedKey(hostKey, l.Person);
-            if (_s.MicrosoftLinkAsked.Contains(k)) continue;
-            _s.MicrosoftLinkAsked.Add(k); _s.Save();
-            Event("linkOffer", new JsonObject { ["person"] = l.Person });
-        }
-    }
-
-    /// <summary>
-    /// Bridge "msStart" {link?, person?}: asks the broker for a sign-in code. Returns {flowId, userCode, verificationUri,
-    /// expiresIn, interval}. link=true links the account to a person whose game is running (their lease signs the call).
-    /// </summary>
-    private async Task<JsonNode> MsStart(JsonObject m)
-    {
-        string? leaseToken = null;
-        if (m["link"]?.GetValue<bool>() == true)
-        {
-            var person = m["person"]?.GetValue<string>();
-            lock (_active)
-            {
-                var lease = person != null ? _active.GetValueOrDefault(person) : _active.Values.FirstOrDefault(l => l.GuestOf == null);
-                leaseToken = lease?.LeaseToken ?? throw new UiError("link_needs_game", "Start the game first, then link your Microsoft account while you play.", person);
-            }
-        }
-        var j = await Broker().MicrosoftStart(leaseToken);
-        var uri = j["verificationUri"]?.GetValue<string>() ?? "";
-        _msUri = MicrosoftUri(uri) ? uri : null;
-        Log.Info(leaseToken != null ? "microsoft sign-in started (link)" : "microsoft sign-in started"); // never the code
-        return new JsonObject
-        {
-            ["flowId"] = j["flowId"]?.GetValue<string>(),
-            ["userCode"] = j["userCode"]?.GetValue<string>(),
-            ["verificationUri"] = uri,
-            ["expiresIn"] = j["expiresIn"]?.GetValue<int>() ?? 900,
-            ["interval"] = j["interval"]?.GetValue<int>() ?? 5,
-        };
-    }
-
-    /// <summary>Only Microsoft's own sign-in pages (https, a microsoft.com or live.com host) are ever opened.</summary>
-    private static bool MicrosoftUri(string s) =>
-        Uri.TryCreate(s, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps && u.IsDefaultPort && u.UserInfo.Length == 0
-        && (u.Host is "microsoft.com" or "live.com"
-            || u.Host.EndsWith(".microsoft.com", StringComparison.OrdinalIgnoreCase) || u.Host.EndsWith(".live.com", StringComparison.OrdinalIgnoreCase));
-
-    /// <summary>Bridge "msOpen": opens the current sign-in's Microsoft page in the default browser (the page copies the code).</summary>
-    private JsonNode? MsOpen()
-    {
-        var uri = _msUri ?? throw new UiError("flow_unknown", "Start the Microsoft sign-in again.");
-        var psi = Platform.IsMac
-            ? new System.Diagnostics.ProcessStartInfo("open") { UseShellExecute = false, ArgumentList = { uri } }
-            : new System.Diagnostics.ProcessStartInfo(uri) { UseShellExecute = true };
-        System.Diagnostics.Process.Start(psi)?.Dispose();
-        return null;
-    }
-
-    private JsonNode? MsCancel()
-    {
-        try { _msCts?.Cancel(); } catch (ObjectDisposedException) { /* just finished */ }
-        return null;
-    }
-
-    /// <summary>
-    /// Bridge "msPoll" {flowId, interval?, expiresIn?}: polls until the person has signed in on Microsoft's page, sending
-    /// {event:"msWait", flowId, secondsLeft} while waiting. A new sign-in saves its device token like an invite login (a
-    /// player card); a link marks the person linked. Returns {person, gamertag, linked}. "msCancel" or "cancel" stops it.
-    /// </summary>
-    private async Task<JsonNode> MsPoll(JsonObject m)
-    {
-        var flowId = m["flowId"]?.GetValue<string>() ?? throw new UiError("flow_unknown", "Start the Microsoft sign-in again.");
-        var interval = TimeSpan.FromSeconds(Math.Clamp(m["interval"]?.GetValue<int>() ?? 5, 2, 60));
-        var deadline = DateTime.UtcNow.AddSeconds(Math.Clamp(m["expiresIn"]?.GetValue<int>() ?? 900, 30, 3600) + 30);
-        var broker = Broker();
-        var hostKey = HostKey()!;
-        MsCancel(); // one sign-in at a time
-        using var cts = new CancellationTokenSource();
-        _msCts = cts;
-        try
-        {
-            while (true)
-            {
-                var left = (int)(deadline - DateTime.UtcNow).TotalSeconds;
-                if (left <= 0) throw new UiError("ms_expired", "The code expired. Start again for a new one.");
-                Event("msWait", new JsonObject { ["flowId"] = flowId, ["secondsLeft"] = left });
-                await Task.Delay(interval, cts.Token);
-                JsonNode j;
-                try { j = await broker.MicrosoftPoll(flowId, cts.Token); }
-                catch (BrokerException e) when (e.Code == "too_many_attempts") // slow down, don't fail
-                {
-                    var wait = e.Body?["retryAfterSeconds"]?.GetValue<int>() ?? 10;
-                    await Task.Delay(TimeSpan.FromSeconds(Math.Clamp(wait, 1, 120)), cts.Token);
-                    continue;
-                }
-                catch (BrokerException e) when (e.Code is "unreachable" or "timeout") { continue; } // a blip: the code's expiry ends it
-                if (j["state"]?.GetValue<string>() != "done") continue; // 202 pending
-                var person = j["person"]?.GetValue<string>() ?? "";
-                if (j["deviceToken"]?.GetValue<string>() is { Length: > 0 } dt)
-                {
-                    RememberedStore.Add(hostKey, person, j["deviceId"]?.GetValue<string>() ?? "", dt);
-                    Log.Info($"microsoft sign-in: {person} is saved on this PC");
-                }
-                else Log.Info($"microsoft sign-in: {person} linked");
-                RememberedStore.SetLinked(hostKey, person, true);
-                Event("saved", new JsonObject { ["saved"] = SavedJson() });
-                return new JsonObject
-                {
-                    ["person"] = person, ["gamertag"] = j["gamertag"]?.GetValue<string>(), ["linked"] = j["linked"]?.GetValue<bool>() ?? false,
-                };
-            }
-        }
-        catch (OperationCanceledException) when (cts.IsCancellationRequested)
-        {
-            throw new UiError("cancelled", "Stopped.");
-        }
-        catch (BrokerException e)
-        {
-            throw new UiError(e.Code ?? "error", e.Message);
-        }
-        finally { if (_msCts == cts) _msCts = null; }
     }
 
     /// <summary>Keeps the lease alive while the game runs, then gives the account back.</summary>
@@ -672,7 +529,6 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
         finally
         {
             conn?.Dispose();
-            lock (_active) { if (_active.TryGetValue(lease.Person, out var l) && l == lease) _active.Remove(lease.Person); }
             lock (_slots) _slots.Remove(gp.Slot);
             Interlocked.Decrement(ref _running);
             DisposeRetired();
