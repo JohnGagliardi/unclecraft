@@ -55,6 +55,7 @@ const ERRORS = {
   update_quit_game: ['QUIT MINECRAFT FIRST', 'A new UncleCraft is ready. Quit Minecraft, then press Play again to update.'],
   // split-screen guests (the broker's message is shown above the hint)
   guest_in_use: ['GUEST ALREADY PLAYING', 'Player 1 already has a guest playing. Close that game first, or pick a saved player for the right screen.'],
+  guest_cannot_bring_guest: ["A GUEST CAN'T BRING A GUEST", 'Only player 1 can add a guest.'],
 };
 function friendly(err) {
   const [title, hint] = ERRORS[err?.code] || ['SOMETHING WENT WRONG', 'Try again. If it keeps happening, tell the host.'];
