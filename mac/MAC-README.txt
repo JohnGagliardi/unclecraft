@@ -30,6 +30,12 @@ Which file?
 
 4. Controller: plug it in before clicking Play. In the game: Controllable settings > Select Controller.
 
+5. Split-screen (2-4 players): to put the game windows in their places, UncleCraft needs the Accessibility
+   permission. The first time, macOS asks; if it asks to let UncleCraft control "System Events", click OK too.
+   Then: System Settings > Privacy & Security > Accessibility > turn UncleCraft on, and click Play again.
+   Without it the games still open at the right size and you drag them into place.
+   After replacing the app with a newer zip, turn that switch off and on again if the windows stop moving.
+
 If something goes wrong, send the host these files (Finder > Go > Go to Folder..., paste the path):
    ~/Library/Logs/UncleCraft/launcher.log                       (the launcher)
    ~/Library/Application Support/UncleCraft/games/p1/launcher-java.log   (Java / game start)

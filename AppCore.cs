@@ -197,6 +197,17 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
     private void SetNotice(string text) { _notice = text; _noticeSticky = true; }
 
     /// <summary>
+    /// A notice from the window host (macOS: "allow Accessibility to arrange the games"), shown on the home screen chip.
+    /// Posted 5 s later: the page's "update" event also resets the launch screen's title while Play is still open,
+    /// and that screen closes 3.5 s after "ingame".
+    /// </summary>
+    public void HostNotice(string text)
+    {
+        SetNotice(text);
+        _ = Task.Delay(5000).ContinueWith(_ => Event("update", UpdateJson(Updater.Last ?? new UpdateCheck("checking"))), TaskScheduler.Default);
+    }
+
+    /// <summary>
     /// The check used right before installing. The 10-minute cache is fine for "nothing to do", but a cached "available"
     /// may name a release that has since been replaced by a newer one (a check at 17:50 said 0.2.3, 0.2.5 came out at
     /// 17:52, Play at 17:58 installed 0.2.3). So an update is only installed from a fresh look at GitHub.

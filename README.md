@@ -41,8 +41,11 @@ One PC can run up to four games at once, console-style split-screen.
   - 2 players: top and bottom halves, full width (player 1 on top).
   - 3 players: player 1 on the top half; players 2 and 3 share the bottom half, left and right.
   - 4 players: a 2x2 grid (1 top-left, 2 top-right, 3 bottom-left, 4 bottom-right).
-  On Windows the app puts the windows there. On a Mac each game opens at the right size but you drag it into place
-  (macOS doesn't let the app move other windows).
+  The app puts the windows there. On a Mac that needs the **Accessibility** permission: the first split-screen Play
+  asks for it (and may also ask to let UncleCraft control System Events: allow that too). Turn UncleCraft on in
+  System Settings > Privacy & Security > Accessibility, then Play again. Without it the games still start at the
+  right size and you drag them into place; the home screen says so once. After replacing the app with a newer zip,
+  macOS may need the switch turned off and on again.
 - **All or nothing:** every player takes a seat on the server. If there aren't enough free seats for everyone, nobody
   starts and you see **THE SERVER IS FULL**: try fewer players.
 - **Controllers:** plug them all in before you click Play. The keyboard and mouse work in whichever window you
