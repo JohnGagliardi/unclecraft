@@ -10,7 +10,7 @@ namespace McShared;
 /// <summary>
 /// One update check. State: off (no release key built in yet), none, available (Play installs it first),
 /// available-optout (--no-update or UNCLECRAFT_NO_UPDATE=1: shown, never forced), failed (GitHub unreachable or a bad release).
-/// Builds from source ("-dev") update exactly like releases; see Evaluate for the one difference in the version compare.
+/// Builds from source carry their release's number (see Directory.Build.targets) and update exactly like releases.
 /// </summary>
 public sealed record UpdateCheck(string State, ReleaseManifest? Release = null, string? Reason = null);
 
@@ -51,7 +51,7 @@ public static class Updater
     /// <summary>The last check's result (null before the first one finishes).</summary>
     public static UpdateCheck? Last { get; private set; }
 
-    /// <summary>"0.2.57" or "0.2.0-dev": the informational version without its +commit part.</summary>
+    /// <summary>"0.2.57": the informational version without its +commit part.</summary>
     public static string InfoVersion => InfoVersionFull.Split('+')[0];
 
     /// <summary>Short commit from the informational version's +metadata (the SDK adds the git sha), or null.</summary>
@@ -67,8 +67,6 @@ public static class Updater
 
     /// <summary>Key in release.json's files.</summary>
     public static string Rid => Platform.IsMac ? (Platform.IsArm64 ? "osx-arm64" : "osx-x64") : "win-x64";
-
-    public static bool IsDev => ReleaseSig.IsDev(InfoVersionFull);
 
     /// <summary>The installed Windows copy (see Installer in Program.cs).</summary>
     public static string InstalledExe => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "UncleCraft", "UncleCraft.exe");
@@ -177,18 +175,16 @@ public static class Updater
         var m = ReleaseManifest.Parse(json);
         if (!m.Files.ContainsKey(Rid)) return new UpdateCheck("none", m, $"release {m.Version} has no {Rid} file");
         var mine = ReleaseSig.ParseVersion(InfoVersion) ?? new Version(0, 0, 0);
-        if (ReleaseSig.ParseVersion(m.Version) is not { } v || !Takes(v, mine, IsDev)) return new UpdateCheck("none", m);
+        if (ReleaseSig.ParseVersion(m.Version) is not { } v || !Takes(v, mine)) return new UpdateCheck("none", m);
         if (BadVersions().Contains(m.Version)) return new UpdateCheck("none", m, $"{m.Version} didn't start on this computer before");
         return new UpdateCheck(NoUpdate ? "available-optout" : "available", m);
     }
 
     /// <summary>
-    /// A release build takes a strictly newer release. A build from source ("-dev") also takes the same number: 0.2.5-dev
-    /// is local changes on top of some release, never that release, so it updates to it. After the update the running
-    /// copy is the release (no "-dev"), so equal versions stop there: no loop. A source build numbered above the latest
-    /// release only happens with a hand-passed -p:Version; that is treated as a deliberate newer version (no update).
+    /// Takes a strictly newer release only. A build from source is numbered like the release it was built from (the
+    /// newest v* tag, see Directory.Build.targets), so it updates exactly like that release.
     /// </summary>
-    internal static bool Takes(Version release, Version mine, bool dev) => dev ? release >= mine : release > mine;
+    internal static bool Takes(Version release, Version mine) => release > mine;
 
     private static string CacheFile => Path.Combine(Paths.Root, "update-check.json");
 

@@ -1,12 +1,15 @@
 <Project>
-  <!-- The one place the app version lives: McShared.csproj and mac/UncleCraft.Mac.csproj inherit it, and the mac
-       build scripts read it (dotnet msbuild -getProperty:Version). Local builds are 0.2.0-dev (the app reads the
-       -dev marker from AssemblyInformationalVersion and also takes a release with the same number; otherwise it
-       updates like a release); the release workflow passes
-       -p:Version=0.2.<run_number>, which drops the marker. Every push to main that isn't docs-only ships to every
+  <!-- The one place the app version lives: McShared.csproj, mac/UncleCraft.Mac.csproj and tools/sign-release inherit
+       it. A build from source is numbered like the release it was built from: Directory.Build.targets sets the
+       version from the newest v* tag reachable from HEAD (git describe), so a checkout at v0.2.5 builds 0.2.5 and
+       updates to any newer release, exactly like the 0.2.5 release. Without git, a repo or a tag (zip download,
+       shallow clone) it stays 0.2.0, which takes any release. The release workflow passes -p:Version=0.2.<run_number>;
+       a version given on the command line always wins and git isn't asked. The mac build scripts read the result with
+       dotnet msbuild -t:UncleCraftVersion -getProperty:Version. Every push to main that isn't docs-only ships to every
        install as the next release. -->
   <PropertyGroup>
+    <!-- Set before the default below, so only a command-line (global) or environment Version makes this true. -->
+    <UncleCraftVersionGiven Condition="'$(Version)' != ''">true</UncleCraftVersionGiven>
     <Version>0.2.0</Version>
-    <InformationalVersion Condition="'$(Version)' == '0.2.0'">0.2.0-dev</InformationalVersion>
   </PropertyGroup>
 </Project>

@@ -175,3 +175,5 @@ the host PC.
   `-dev` build also takes a release with the same number. Opt out with `--no-update` or `UNCLECRAFT_NO_UPDATE=1`
   (state `available-optout`, label "Updates are off on this copy"). The updater refuses to swap `dotnet.exe` or an
   unwritable folder before downloading. Tested in a scratch harness on Windows; Mac not run.
+- 2026-11-23: no more "-dev": a build from source takes the newest reachable v* tag as its version
+  (Directory.Build.targets, git describe; 0.2.0 without git or tags; CI's -p:Version wins) and updates like a release.

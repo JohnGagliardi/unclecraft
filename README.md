@@ -110,8 +110,10 @@ dotnet publish -c Release -o dist     # Windows: then run dist\UncleCraft.exe
 sh mac/build-mac.sh                   # Mac: builds for your chip and puts it in Applications
 ```
 
-Your own builds are version `0.2.0-dev` and update themselves from GitHub Releases like everyone's copy: Play
-installs the latest release first (a `-dev` build also takes a release with the same number). To test local
+Your own builds are the same as the releases: they take the version of the newest release tag in your checkout
+(`git describe`; `0.2.0` for a copy without git history, such as a zip download) and update themselves from GitHub
+Releases like everyone's copy: Play installs a newer release first. A build of the latest release's code, edited or
+not, has that release's number and isn't updated until the next one. To test local
 changes, opt out with `--no-update` or the environment variable `UNCLECRAFT_NO_UPDATE=1`; the home screen then says
 updates are off on this copy. (A build given a higher version by hand with `-p:Version` counts as newer and isn't
 updated.) Every push to `main` (except docs-only changes)

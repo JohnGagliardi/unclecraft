@@ -4,13 +4,14 @@ $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 $dist = Join-Path $here '..\dist-mac'
 $icns = Join-Path $here '..\icon\UncleCraft.icns'
-$version = "$(dotnet msbuild (Join-Path $here 'UncleCraft.Mac.csproj') -getProperty:Version)".Trim() # from ..\Directory.Build.props
+# Same number the binary gets (newest v* tag, see ..\Directory.Build.targets); passed back in so plist and binary agree.
+$version = "$(dotnet msbuild (Join-Path $here 'UncleCraft.Mac.csproj') -nologo -t:UncleCraftVersion -getProperty:Version)".Trim()
 if ($LASTEXITCODE -or -not $version) { throw 'could not read the version' }
 New-Item -ItemType Directory -Force $dist | Out-Null
 foreach ($rid in 'osx-arm64', 'osx-x64') {
     $out = Join-Path $here "out\$rid"
     if (Test-Path $out) { Remove-Item -Recurse -Force $out }
-    dotnet publish (Join-Path $here 'UncleCraft.Mac.csproj') -c Release -r $rid --self-contained -o $out -nologo
+    dotnet publish (Join-Path $here 'UncleCraft.Mac.csproj') -c Release -r $rid --self-contained -o $out -nologo "-p:Version=$version"
     if ($LASTEXITCODE) { throw "publish $rid failed" }
     $label = if ($rid -eq 'osx-arm64') { 'apple-silicon' } else { 'intel' }
     python -I (Join-Path $here 'package_mac.py') $out $label $icns (Join-Path $dist "UncleCraft-mac-$label.zip") $version

@@ -4,7 +4,8 @@
 # A locally built app isn't quarantined and gets an ad-hoc signature here, so no Gatekeeper steps are needed.
 set -e
 here="$(cd "$(dirname "$0")" && pwd)"
-version="$(dotnet msbuild "$here/UncleCraft.Mac.csproj" -getProperty:Version | tr -d '[:space:]')" # from ../Directory.Build.props
+# Same number the binary gets (newest v* tag, see ../Directory.Build.targets); passed back in so plist and binary agree.
+version="$(dotnet msbuild "$here/UncleCraft.Mac.csproj" -nologo -t:UncleCraftVersion -getProperty:Version | tr -d '[:space:]')"
 [ -n "$version" ] || { echo "Could not read the version"; exit 1; }
 case "$(uname -m)" in
   arm64)  rid=osx-arm64 ;;
@@ -15,7 +16,7 @@ esac
 pub="$here/out/$rid"
 app="$here/out/UncleCraft.app"
 rm -rf "$pub" "$app"
-dotnet publish "$here/UncleCraft.Mac.csproj" -c Release -r "$rid" --self-contained -o "$pub" -nologo
+dotnet publish "$here/UncleCraft.Mac.csproj" -c Release -r "$rid" --self-contained -o "$pub" -nologo -p:Version="$version"
 
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp -R "$pub/." "$app/Contents/MacOS/"

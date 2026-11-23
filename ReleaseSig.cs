@@ -92,13 +92,11 @@ public static class ReleaseSig
         catch { return null; }
     }
 
-    /// <summary>"0.2.57", "0.2.0-dev+abc" -> major.minor.build; null if it doesn't parse.</summary>
+    /// <summary>"0.2.57", "0.2.6+abc" -> major.minor.build; null if it doesn't parse.</summary>
     public static Version? ParseVersion(string s)
     {
         var core = s.Trim().Split('+', '-')[0];
         if (!System.Version.TryParse(core, out var v)) return null;
         return new Version(v.Major, v.Minor, Math.Max(v.Build, 0));
     }
-
-    public static bool IsDev(string informationalVersion) => informationalVersion.Contains("-dev");
 }
