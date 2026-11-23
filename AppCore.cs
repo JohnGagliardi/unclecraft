@@ -184,7 +184,8 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
             _notice = st.State switch
             {
                 "failed" => "Couldn't check for updates.",
-                "available-dev" => $"Update available: v{st.Release!.Version} (dev build).",
+                // a plain label, not a button: dev builds (and --no-update) never update themselves
+                "available-dev" => $"Dev build, updates off (v{st.Release!.Version} is on GitHub Releases).",
                 _ => null,
             };
         Event("update", UpdateJson(st));
