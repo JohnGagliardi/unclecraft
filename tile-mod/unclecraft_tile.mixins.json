@@ -2,7 +2,7 @@
   "required": false,
   "minVersion": "0.8",
   "package": "unclecraft.tile.mixin",
-  "compatibilityLevel": "JAVA_25",
+  "compatibilityLevel": "JAVA_21",
   "client": ["WindowMixin"],
   "injectors": { "defaultRequire": 0 }
 }

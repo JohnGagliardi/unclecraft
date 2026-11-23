@@ -17,7 +17,7 @@ $classes = Join-Path $here 'build\classes'
 if (Test-Path $classes) { Remove-Item -Recurse -Force $classes }
 New-Item -ItemType Directory -Force $classes | Out-Null
 $src = Get-ChildItem -Recurse (Join-Path $here 'src') -Filter *.java | ForEach-Object FullName
-& "$Jdk\javac.exe" --release 25 '-proc:none' '-Xlint:-options' -cp ($cp -join ';') -d $classes $src
+& "$Jdk\javac.exe" --release 21 '-proc:none' '-Xlint:-options' -cp ($cp -join ';') -d $classes $src
 if ($LASTEXITCODE -ne 0) { throw 'javac failed' }
 Copy-Item (Join-Path $here 'fabric.mod.json'), (Join-Path $here 'unclecraft_tile.mixins.json') $classes
 $jar = Join-Path $here 'unclecraft-tile.jar'
