@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "unclecraft_tile",
+  "version": "1.0.0",
+  "name": "UncleCraft Tile",
+  "description": "UncleCraft split-screen: puts the game window in its screen tile without a title bar. Inactive unless started with -Dunclecraft.tile=x,y,w,h.",
+  "environment": "client",
+  "mixins": ["unclecraft_tile.mixins.json"],
+  "depends": { "fabricloader": ">=0.20.0", "minecraft": "*" }
+}

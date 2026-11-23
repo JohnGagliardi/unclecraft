@@ -9,3 +9,4 @@ mac/bin/
 mac/obj/
 *.user
 .vs/
+tile-mod/build/

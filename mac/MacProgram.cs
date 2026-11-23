@@ -102,14 +102,13 @@ public static class MacProgram
         return new MemoryStream(Encoding.UTF8.GetBytes(html));
     }
 
-    /// <summary>Split-screen: each game starts at its size, then Arrange moves the windows into place through
-    /// System Events (needs the Accessibility permission; without it the games just keep their launch size).
+    /// <summary>Split-screen: the tile mod in each game removes its title bar and puts it in its tile (SplitTile), from
+    /// inside the game, so nothing here moves windows (no Accessibility or Automation permission needed).
     /// Updates: no one-copy lock on macOS (open -n starts the new version), so the handover only minimizes the window.</summary>
     private sealed class MacWindows : IGameWindows, IUpdateHost
     {
         /// <summary>Shows a home-screen notice (AppCore.HostNotice).</summary>
         public Action<string>? Notice { get; set; }
-        private int _permissionWarned; // 1 = the permission notice was shown (once per launcher run)
 
         public void Handover(bool toNewVersion)
         {
@@ -117,8 +116,17 @@ public static class MacProgram
             try { w?.Invoke(() => w.SetMinimized(toNewVersion)); } catch (Exception e) { Log.Error("update handover failed", e); }
         }
 
-        /// <summary>Each game starts at its SplitLayout size on the launcher's monitor (40 pt less height for the title
-        /// bar); Arrange then moves them into place.</summary>
+        /// <summary>The player's SplitLayout rectangle on the launcher's screen (visible frame, top-left origin, points:
+        /// SDL's window coordinates on macOS). Null if the screen can't be found: the game then just starts at SplitSize.</summary>
+        public async Task<System.Drawing.Rectangle?> SplitTile(int index, int count)
+        {
+            if (count < 2) return null;
+            try { return await LauncherScreen() is { } area ? SplitLayout.Rects(count, area)[Math.Clamp(index, 0, count - 1)] : null; }
+            catch (Exception e) { Log.Error("finding the split-screen tile failed", e); return null; }
+        }
+
+        /// <summary>Fallback without the tile mod: the SplitLayout size on the launcher's monitor (40 pt less height for
+        /// the title bar); the player drags the windows into place.</summary>
         public (int width, int height)? SplitSize(int index, int count)
         {
             if (count < 2) return null;
@@ -129,91 +137,18 @@ public static class MacProgram
             return (Math.Max(320, r.Width), Math.Max(240, r.Height - 40));
         }
 
-        /// <summary>Never throws and never runs on the UI thread; gives up after about 30 s (games keep their size).</summary>
-        public Task Arrange(IReadOnlyList<GameProcess> games) =>
-            games.Count < 2 ? Task.CompletedTask : Task.Run(() => Tile([.. games.Select(g => g.Proc)]));
-
-        private async Task Tile(IReadOnlyList<Process> games)
+        /// <summary>Nothing to do: tiled games placed themselves, and the others keep their launch size.</summary>
+        public Task Arrange(IReadOnlyList<GameProcess> games)
         {
-            try
-            {
-                if (await LauncherScreen() is not { } area) return;
-                var rects = SplitLayout.Rects(games.Count, area);
-                var placed = new bool[games.Count];
-                var deadline = DateTime.UtcNow.AddSeconds(30);
-                var last = "";
-                while (true)
-                {
-                    for (var i = 0; i < games.Count; i++)
-                    {
-                        if (placed[i]) continue;
-                        int pid;
-                        try { if (games[i].HasExited) { placed[i] = true; continue; } pid = games[i].Id; }
-                        catch { placed[i] = true; continue; }
-                        var r = rects[i];
-                        var (code, output, error) = await Osascript(TimeSpan.FromSeconds(8), "-e", PlaceScript,
-                            pid.ToString(), r.X.ToString(), r.Y.ToString(), r.Width.ToString(), r.Height.ToString());
-                        if (code == 0 && output == "ok") { placed[i] = true; Log.Info($"game window {i + 1} placed at {r}"); continue; }
-                        last = code == 0 ? output : error; // "noproc"/"nowindow" (not up yet), a timeout (a prompt is open), or an error
-                        if (PermissionProblem(error) is { } fix) { WarnPermission(error, fix); return; }
-                    }
-                    if (placed.All(p => p)) return;
-                    if (DateTime.UtcNow > deadline) { Log.Info($"could not arrange the game windows (last: {last}); they keep their launch size"); return; }
-                    await Task.Delay(1500);
-                }
-            }
-            catch (Exception e) { Log.Error("arranging the game windows failed", e); }
+            if (games.Count > 1 && games.Any(g => !g.Tiled)) Log.Info("some game windows run without the tile mod; they keep their launch size");
+            return Task.CompletedTask;
         }
-
-        /// <summary>The settings page that fixes an osascript error, or null when it isn't a permission problem.</summary>
-        private static string? PermissionProblem(string error)
-        {
-            if (error.Contains("-1743")) return "Automation"; // not authorized to send Apple events to System Events
-            if (error.Contains("assistive access") || error.Contains("-25211") || (error.Contains("-1719") && !error.Contains("Invalid index")))
-                return "Accessibility";
-            return null;
-        }
-
-        private void WarnPermission(string error, string page)
-        {
-            Log.Info($"can't arrange the game windows: {error}");
-            if (Interlocked.Exchange(ref _permissionWarned, 1) == 1) return;
-            Notice?.Invoke(page == "Automation"
-                ? "To arrange the game windows, allow UncleCraft to control System Events in System Settings > Privacy & Security > Automation."
-                : "To arrange the game windows, allow UncleCraft in System Settings > Privacy & Security > Accessibility.");
-        }
-
-        /// <summary>
-        /// Moves and sizes window 1 of a process. argv: pid x y w h, in System Events' coordinates (points, origin at the
-        /// top-left of the main screen, y down; the size includes the title bar). Position again after the size, in case
-        /// macOS nudged the window while it was still at its old size.
-        /// </summary>
-        private const string PlaceScript = """
-            on run argv
-              set thePid to (item 1 of argv) as integer
-              set x to (item 2 of argv) as integer
-              set y to (item 3 of argv) as integer
-              set w to (item 4 of argv) as integer
-              set h to (item 5 of argv) as integer
-              tell application "System Events"
-                set procs to every process whose unix id is thePid
-                if (count of procs) is 0 then return "noproc"
-                tell item 1 of procs
-                  if (count of windows) is 0 then return "nowindow"
-                  set position of window 1 to {x, y}
-                  set size of window 1 to {w, h}
-                  set position of window 1 to {x, y}
-                end tell
-              end tell
-              return "ok"
-            end run
-            """;
 
         /// <summary>
         /// Visible frame (menu bar and Dock excluded) of the screen the launcher window is on, converted from AppKit's
-        /// bottom-left origin to System Events' top-left one: top = mainScreenHeight - (origin.y + height). The launcher's
+        /// bottom-left origin to the top-left one SDL and CoreGraphics use: top = mainScreenHeight - (origin.y + height). The launcher's
         /// window is found with CGWindowListCopyWindowInfo (already top-left; needs no permission); if that fails, the
-        /// main (menu bar) screen. Output "x y w h"; null = couldn't tell, so don't arrange.
+        /// main (menu bar) screen. Output "x y w h"; null = couldn't tell, so no tile. Needs no permission.
         /// </summary>
         private const string ScreenScript = """
             function run(argv) {
@@ -247,7 +182,7 @@ public static class MacProgram
             var n = output.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             if (code == 0 && n.Length == 4 && n.All(s => int.TryParse(s, out _)) && int.Parse(n[2]) >= 640 && int.Parse(n[3]) >= 480)
                 return new System.Drawing.Rectangle(int.Parse(n[0]), int.Parse(n[1]), int.Parse(n[2]), int.Parse(n[3]));
-            Log.Info($"can't find the launcher's screen (exit {code}: {output} {error}); the games keep their launch size");
+            Log.Info($"can't find the launcher's screen (exit {code}: {output} {error}); the games start at their launch size, not tiled");
             return null;
         }
 

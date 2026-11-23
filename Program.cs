@@ -143,7 +143,8 @@ internal static class Installer
     }
 }
 
-/// <summary>Split-screen on Windows: both hosts (pixel page and classic window) size and tile the games with this.</summary>
+/// <summary>Split-screen on Windows: both hosts (pixel page and classic window) size and tile the games with this. Games
+/// with the tile mod (GameProcess.Tiled) place themselves borderless; LaunchSize and Tile are the fallback for the rest.</summary>
 internal static class WindowTiler
 {
     [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
@@ -152,6 +153,11 @@ internal static class WindowTiler
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] private static extern bool AdjustWindowRectEx(ref RECT r, uint style, bool menu, uint exStyle);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT r, int size);
+
+    /// <summary>The tile mod's rectangle. The app is per-monitor DPI aware (ApplicationHighDpiMode PerMonitorV2), so the
+    /// working area is in physical pixels of the virtual screen, which is also what SDL3 window coordinates are on Windows.</summary>
+    public static Rectangle? TileRect(int index, int count, Rectangle workingArea) =>
+        count < 2 ? null : SplitLayout.Rects(count, workingArea)[Math.Clamp(index, 0, count - 1)];
 
     /// <summary>
     /// Minecraft's --width/--height set the game area inside the window; the title bar and frame come on top. So each
@@ -167,9 +173,11 @@ internal static class WindowTiler
     }
 
     /// <summary>Waits for every game window, then puts them in their SplitLayout rectangles of the given working area.</summary>
-    public static async Task Tile(IReadOnlyList<Process> games, Rectangle workingArea)
+    public static async Task Tile(IReadOnlyList<GameProcess> all, Rectangle workingArea)
     {
-        if (games.Count < 2) return; // one player: the game keeps its own window, as before split-screen
+        if (all.Count < 2) return; // one player: the game keeps its own window, as before split-screen
+        if (all.All(g => g.Tiled)) return; // the tile mod placed every window itself
+        var games = all.Select(g => g.Proc).ToList();
         var deadline = DateTime.Now.AddMinutes(4);
         while (DateTime.Now < deadline)
         {
@@ -182,6 +190,7 @@ internal static class WindowTiler
         var rects = SplitLayout.Rects(games.Count, workingArea);
         for (var i = 0; i < games.Count; i++)
         {
+            if (all[i].Tiled) continue;
             try { games[i].Refresh(); if (!games[i].HasExited) Place(games[i].MainWindowHandle, rects[i]); }
             catch (Exception e) { Log.Info($"tile window {i + 1}: {e.Message}"); }
         }

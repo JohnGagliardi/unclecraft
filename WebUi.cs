@@ -103,7 +103,9 @@ public sealed class WebUiForm : Form, IGameWindows, IUpdateHost
 
     public (int width, int height)? SplitSize(int index, int count) => WindowTiler.LaunchSize(index, count, LauncherArea());
 
-    public Task Arrange(IReadOnlyList<GameProcess> games) => WindowTiler.Tile([.. games.Select(g => g.Proc)], LauncherArea());
+    public Task<Rectangle?> SplitTile(int index, int count) => Task.FromResult(WindowTiler.TileRect(index, count, LauncherArea()));
+
+    public Task Arrange(IReadOnlyList<GameProcess> games) => WindowTiler.Tile(games, LauncherArea());
 
     // ---------------- IUpdateHost ----------------
 

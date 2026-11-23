@@ -29,6 +29,7 @@
   <ItemGroup>
     <!-- Release-signing public key (placeholder until tools/new-signing-key.ps1 is run; then updates turn on). -->
     <EmbeddedResource Include="UpdateKey.pub.txt" LogicalName="UpdateKey.pub.txt" />
+    <EmbeddedResource Include="tile-mod\unclecraft-tile.jar" LogicalName="unclecraft-tile.jar" />
   </ItemGroup>
   <ItemGroup>
     <!-- Pixel launcher UI (WebView2). Served from the exe's resources; shots.ps1 is a dev helper and not shipped. -->

@@ -20,6 +20,7 @@
     <Compile Include="..\AppCore.cs;..\Broker.cs;..\Game.cs;..\Log.cs;..\Logins.cs;..\Platform.cs;..\ReleaseSig.cs;..\Remembered.cs;..\Settings.cs;..\Tunnel.cs;..\Updater.cs" />
     <EmbeddedResource Include="..\ui\*.html;..\ui\*.css;..\ui\*.js" LogicalName="ui/%(Filename)%(Extension)" />
     <EmbeddedResource Include="..\UpdateKey.pub.txt" LogicalName="UpdateKey.pub.txt" />
+    <EmbeddedResource Include="..\tile-mod\unclecraft-tile.jar" LogicalName="unclecraft-tile.jar" />
     <PackageReference Include="Photino.NET" Version="4.0.16" />
   </ItemGroup>
 </Project>

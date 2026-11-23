@@ -417,10 +417,53 @@ public sealed class GameProcess(Process proc, int slot)
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Process Proc { get; } = proc;
     public int Slot { get; } = slot;
+    /// <summary>The tile mod places this window itself (borderless, in its split-screen tile): hosts leave it alone.</summary>
+    public bool Tiled { get; init; }
     public bool WindowReady => _ready.Task.IsCompleted
         || (OperatingSystem.IsWindows() && Refresh() && Proc.MainWindowHandle != IntPtr.Zero);
     public void MarkWindowReady() => _ready.TrySetResult();
     private bool Refresh() { try { Proc.Refresh(); return true; } catch { return false; } }
+}
+
+/// <summary>
+/// UncleCraft's own tiny Fabric client mod (tile-mod/, embedded in the app as "unclecraft-tile.jar"). With
+/// -Dunclecraft.tile=x,y,w,h it removes the game window's title bar and frame and puts the window in its split-screen
+/// tile, from inside the game (SDL3 can't have its frame removed from outside on macOS). It is only in games/pN/mods
+/// for split-screen launches; every other launch removes it, so normal play never has it.
+/// </summary>
+internal static class TileMod
+{
+    public const string FileName = "unclecraft-tile.jar";
+
+    public static bool IsTileMod(string path) => Path.GetFileName(path).Equals(FileName, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Puts the mod in (wanted) or takes it out of a mods folder. True = it's there for this launch.
+    /// Never throws: if the jar can't be written the game starts without it (the host's window placement then).</summary>
+    public static bool Prepare(string modsDir, int slot, bool wanted)
+    {
+        var path = Path.Combine(modsDir, FileName);
+        try
+        {
+            if (!wanted) { if (File.Exists(path)) File.Delete(path); return false; }
+            using var res = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream(FileName)
+                ?? throw new FileNotFoundException("resource missing from the app", FileName);
+            using var mem = new MemoryStream();
+            res.CopyTo(mem);
+            var bytes = mem.ToArray();
+            if (!File.Exists(path) || !File.ReadAllBytes(path).AsSpan().SequenceEqual(bytes))
+            {
+                var tmp = path + ".tmp";
+                File.WriteAllBytes(tmp, bytes);
+                File.Move(tmp, path, true);
+            }
+            return true;
+        }
+        catch (Exception e)
+        {
+            Log.Info($"p{slot}: tile mod {(wanted ? "not installed" : "not removed")}: {e.Message}");
+            return false;
+        }
+    }
 }
 
 /// <summary>
@@ -471,8 +514,11 @@ public static class GameLauncher
     /// <summary>
     /// Starts the game for one player slot. The access token only goes on the command line, never to disk.
     /// Java's console output goes to games/pN/launcher-java.log; WindowReady completes when the game window exists.
+    /// <paramref name="tile"/> (split-screen only) is the window's screen rectangle: the tile mod then puts the window
+    /// there without a frame, and the window starts at that size. Without a tile the mod is removed from the folder.
     /// </summary>
-    public static GameProcess Launch(InstalledGame g, int slot, McToken token, string serverAddress, int? width, int? height)
+    public static GameProcess Launch(InstalledGame g, int slot, McToken token, string serverAddress, int? width, int? height,
+        System.Drawing.Rectangle? tile = null)
     {
         var gameDir = Paths.GameDir(slot);
         Directory.CreateDirectory(gameDir);
@@ -485,7 +531,9 @@ public static class GameLauncher
         Directory.CreateDirectory(modsDir);
         var wanted = g.Mods.Select(m => m.File).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var f in Directory.GetFiles(modsDir, "*.jar"))
-            if (!wanted.Contains(Path.GetFileName(f))) File.Delete(f);
+            if (!wanted.Contains(Path.GetFileName(f)) && !TileMod.IsTileMod(f)) File.Delete(f); // TileMod handles its own
+        var tiled = TileMod.Prepare(modsDir, slot, tile != null && !wanted.Contains(TileMod.FileName));
+        if (tiled) (width, height) = (tile!.Value.Width, tile.Value.Height);
         var copied = new ModHashes(modsDir);
         foreach (var m in g.Mods)
         {
@@ -532,6 +580,7 @@ public static class GameLauncher
         };
         psi.ArgumentList.Add("-Xms1G");
         psi.ArgumentList.Add("-Xmx3G");
+        if (tiled) psi.ArgumentList.Add(FormattableString.Invariant($"-Dunclecraft.tile={tile!.Value.X},{tile.Value.Y},{tile.Value.Width},{tile.Value.Height}"));
         foreach (var a in g.FabricJvmArgs) psi.ArgumentList.Add(Subst(a, vars));
         foreach (var a in Expand(g.VanillaJvmArgs, features)) psi.ArgumentList.Add(Subst(a, vars)); // includes -XstartOnFirstThread on macOS
         if (g.LoggingArg != null) psi.ArgumentList.Add(g.LoggingArg);
@@ -550,7 +599,7 @@ public static class GameLauncher
         Log.Info($"launch p{slot}: {g.JavaExe} {string.Join(' ', shown)}");
 
         var javaLog = new StreamWriter(Path.Combine(gameDir, "launcher-java.log"), false) { AutoFlush = true };
-        var gp = new GameProcess(Process.Start(psi) ?? throw new Exception("Java did not start."), slot);
+        var gp = new GameProcess(Process.Start(psi) ?? throw new Exception("Java did not start."), slot) { Tiled = tiled };
         void OnLine(string? line)
         {
             if (line == null) return;

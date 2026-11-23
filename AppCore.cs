@@ -10,13 +10,17 @@ public sealed class UiError(string code, string message, string? person = null) 
     public string? Person { get; } = person;
 }
 
-/// <summary>What the window host can do with game windows (Windows: size + tile; macOS: size only).</summary>
+/// <summary>What the window host can do with game windows in split-screen.</summary>
 public interface IGameWindows
 {
-    /// <summary>Launch size (Minecraft's --width/--height) of player <paramref name="index"/> (0-based) out of
-    /// <paramref name="count"/> in split-screen: its SplitLayout rectangle, or null to let the game choose.</summary>
+    /// <summary>Screen rectangle of player <paramref name="index"/> (0-based) out of <paramref name="count"/>: its
+    /// SplitLayout rectangle on the launcher's monitor, in the game's (SDL's) window coordinates: top-left origin,
+    /// physical pixels on Windows, points on macOS. The tile mod puts the borderless window there. Null = unknown.</summary>
+    Task<System.Drawing.Rectangle?> SplitTile(int index, int count);
+    /// <summary>Fallback launch size (Minecraft's --width/--height) when the tile mod isn't used: the game area that fits
+    /// the SplitLayout rectangle with a normal window frame, or null to let the game choose.</summary>
     (int width, int height)? SplitSize(int index, int count);
-    /// <summary>Called once all game windows are up (games in player order).</summary>
+    /// <summary>Called once all game windows are up (games in player order); games with Tiled set place themselves.</summary>
     Task Arrange(IReadOnlyList<GameProcess> games);
 }
 
@@ -506,8 +510,10 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
                 {
                     // Fetched right before each launch: in interim mode this is a short-lived one-time join name.
                     var token = await broker.GetMinecraftToken(lease);
-                    var size = started.Count > 1 ? windows.SplitSize(i, started.Count) : null; // its own screen area
-                    gp = GameLauncher.Launch(game, slot, token, address, size?.width, size?.height);
+                    // split-screen: its own screen area (the tile mod places it; the size is the fallback without it)
+                    var tile = started.Count > 1 ? await windows.SplitTile(i, started.Count) : null;
+                    var size = started.Count > 1 ? windows.SplitSize(i, started.Count) : null;
+                    gp = GameLauncher.Launch(game, slot, token, address, size?.width, size?.height, tile);
                 }
                 catch { conn?.Dispose(); lock (_slots) _slots.Remove(slot); throw; }
                 games.Add(gp);
