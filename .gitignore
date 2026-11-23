@@ -2,6 +2,7 @@ bin/
 obj/
 dist/
 dist-mac/
+out/
 shots/
 mac/out/
 mac/bin/
