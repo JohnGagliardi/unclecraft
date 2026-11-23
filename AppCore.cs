@@ -178,6 +178,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
             ["settings"] = SettingsJson(),
             ["saved"] = SavedJson(),
             ["version"] = Version,
+            ["versionText"] = VersionText, // "v0.2.6", or "v0.2.0-dev" for a build from source
             ["platform"] = Platform.Name,
             ["logPath"] = Log.FilePath,
             ["update"] = UpdateJson(Updater.Last ?? new UpdateCheck("checking")),
@@ -186,6 +187,9 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
     }
 
     private static string Version => Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "?";
+
+    /// <summary>The always-visible version label: "v0.2.6" for a release, "v0.2.6-dev" for a build from source.</summary>
+    public static string VersionText => $"v{Version}{(Updater.IsDev ? "-dev" : "")}";
 
     // ---------------- updates ----------------
 

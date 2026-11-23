@@ -35,6 +35,9 @@ code { background: rgba(255,255,255,.08); padding: 1px 5px; border-radius: 2px; 
 .icon-btn:hover { transform: translateY(-2px); background: var(--panel-2); }
 .icon-btn:active { transform: translateY(1px); }
 .update-chip { position: absolute; top: 12px; left: 12px; max-width: 46%; font-size: 12px; font-weight: 700; color: var(--ink); background: var(--orange); padding: 4px 10px; clip-path: var(--cut); box-shadow: var(--bevel); }
+/* always-visible version, bottom-right; plain text, never clickable, never in the way */
+.version-tag { position: fixed; right: 8px; bottom: 6px; z-index: 50; font-size: 11px; font-weight: 700; color: #fff; opacity: .6;
+  text-shadow: 1px 1px 0 rgba(0,0,0,.7); pointer-events: none; user-select: none; }
 .test-banner { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; gap: 14px; padding: 5px; font-weight: 700; color: var(--ink);
   background: repeating-linear-gradient(-45deg, var(--yellow) 0 18px, #ffb703 18px 36px); border-top: var(--px) solid var(--ink); animation: slide 1.6s linear infinite; background-size: 51px 51px; }
 @keyframes slide { to { background-position: 51px 0 } }

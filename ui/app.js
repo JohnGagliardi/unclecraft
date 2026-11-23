@@ -587,7 +587,7 @@ const Demo = {
     { person: 'Maya', lastPlayed: new Date(Date.now() - 4 * 86400e3).toISOString() },
   ],
   async call(type) {
-    if (type === 'init') return { configured: demo !== 'setup', settings: { server: '192.168.1.20', fingerprint: '12:34:56', soundOn: true, playerCount: demo === 'split' ? 2 : 1, players: [] }, saved: this.saved,
+    if (type === 'init') return { versionText: 'v0.2.6-dev', configured: demo !== 'setup', settings: { server: '192.168.1.20', fingerprint: '12:34:56', soundOn: true, playerCount: demo === 'split' ? 2 : 1, players: [] }, saved: this.saved,
       update: { state: demo === 'update' ? 'failed' : 'none', current: '0.2.3', notice: demo === 'update' ? "Couldn't check for updates." : null } };
     if (type === 'status') return { ok: true, testMode: demo === 'test', mode: demo === 'test' ? 'test' : demo === 'interim' ? 'interim' : 'approved', accounts: { total: 6, free: 4 }, features: ['guests'], playing: [{ person: 'Ben', account: 'PoolAccount3', state: 'online', platform: 'java', world: 'Skyreach' }, { person: 'Mia', account: '', state: 'online', platform: 'console', world: 'Skyreach' }, { person: 'Uncle', account: 'PoolAccount1', state: 'reserved' }] };
     return {};
@@ -611,6 +611,7 @@ async function boot() {
   const r = await call('init');
   S.settings = r.settings; S.saved = r.saved; Sound.on = r.settings.soundOn !== false; S.features = new Set(r.features || []);
   renderUpdate(r.update);
+  $('#versionTag').textContent = r.versionText || (r.version ? `v${r.version}` : '');
   renderSoundBtn();
   setMode(r.settings.playerCount || (r.settings.split ? 2 : 1));
   if (!r.configured) openSetup(false);

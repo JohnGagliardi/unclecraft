@@ -73,6 +73,7 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
         Wide(buttons);
         Wide(_bar);
         Wide(_status);
+        Wide(new Label { Text = AppCore.VersionText, AutoSize = true, Anchor = AnchorStyles.Right, ForeColor = SystemColors.GrayText, Font = new Font(Font.FontFamily, 8f) });
         Controls.Add(t);
 
         _count.SelectedIndexChanged += async (_, _) =>
