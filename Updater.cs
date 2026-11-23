@@ -9,7 +9,8 @@ namespace McShared;
 
 /// <summary>
 /// One update check. State: off (no release key built in yet), none, available (Play installs it first),
-/// available-dev (dev build or --no-update: shown, never forced), failed (GitHub unreachable or a bad release).
+/// available-optout (--no-update or UNCLECRAFT_NO_UPDATE=1: shown, never forced), failed (GitHub unreachable or a bad release).
+/// Builds from source ("-dev") update exactly like releases; see Evaluate for the one difference in the version compare.
 /// </summary>
 public sealed record UpdateCheck(string State, ReleaseManifest? Release = null, string? Reason = null);
 
@@ -78,11 +79,12 @@ public static class Updater
     public static string? TrialFrom { get; private set; }
     public static int TrialParent { get; private set; }
     public static bool IsTrial => TrialFrom != null;
-    /// <summary>--no-update: check, but never force (for testing local changes).</summary>
+    /// <summary>--no-update or UNCLECRAFT_NO_UPDATE=1: check, but never force (contributors testing local changes; off by default).</summary>
     public static bool NoUpdate { get; private set; }
 
     public static void ParseArgs(string[] args)
     {
+        if (Environment.GetEnvironmentVariable("UNCLECRAFT_NO_UPDATE") == "1") NoUpdate = true;
         for (var i = 0; i < args.Length; i++)
         {
             if (args[i] == "--no-update") NoUpdate = true;
@@ -172,10 +174,18 @@ public static class Updater
         var m = ReleaseManifest.Parse(json);
         if (!m.Files.ContainsKey(Rid)) return new UpdateCheck("none", m, $"release {m.Version} has no {Rid} file");
         var mine = ReleaseSig.ParseVersion(InfoVersion) ?? new Version(0, 0, 0);
-        if (ReleaseSig.ParseVersion(m.Version) is not { } v || v <= mine) return new UpdateCheck("none", m);
+        if (ReleaseSig.ParseVersion(m.Version) is not { } v || !Takes(v, mine, IsDev)) return new UpdateCheck("none", m);
         if (BadVersions().Contains(m.Version)) return new UpdateCheck("none", m, $"{m.Version} didn't start on this computer before");
-        return new UpdateCheck(IsDev || NoUpdate ? "available-dev" : "available", m);
+        return new UpdateCheck(NoUpdate ? "available-optout" : "available", m);
     }
+
+    /// <summary>
+    /// A release build takes a strictly newer release. A build from source ("-dev") also takes the same number: 0.2.5-dev
+    /// is local changes on top of some release, never that release, so it updates to it. After the update the running
+    /// copy is the release (no "-dev"), so equal versions stop there: no loop. A source build numbered above the latest
+    /// release only happens with a hand-passed -p:Version; that is treated as a deliberate newer version (no update).
+    /// </summary>
+    internal static bool Takes(Version release, Version mine, bool dev) => dev ? release >= mine : release > mine;
 
     private static string CacheFile => Path.Combine(Paths.Root, "update-check.json");
 
@@ -238,6 +248,7 @@ public static class Updater
     /// <summary>Downloads this platform's file from the release's own tag (not "latest") and checks it against the signed manifest.</summary>
     public static async Task<string> Download(ReleaseManifest m, Action<long, long> progress, CancellationToken ct)
     {
+        CheckCanApply(); // before downloading: a copy that can't be swapped (dotnet run, a read-only folder) says so at once
         var f = m.Files[Rid];
         if (f.Name.Length == 0 || Path.GetFileName(f.Name) != f.Name || f.Name.StartsWith('.') || f.Name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
             throw new UpdateException($"the release has a bad file name {f.Name}");
@@ -290,9 +301,31 @@ public static class Updater
     public static Task Apply(ReleaseManifest m, string file, IUpdateHost? host) =>
         Platform.IsMac ? ApplyMac(m, file, host) : ApplyWindows(m, file, host);
 
+    /// <summary>Throws UpdateException(CantUpdateHere) when this copy can't be swapped.</summary>
+    private static void CheckCanApply()
+    {
+        if (Platform.IsMac)
+        {
+            var bundle = MacBundle() ?? throw new UpdateException("not running from an .app bundle", CantUpdateHere);
+            var parent = Path.GetDirectoryName(bundle)!;
+            if (!Writable(parent)) throw new UpdateException($"{parent} isn't writable", CantUpdateHere);
+        }
+        else
+        {
+            // `dotnet UncleCraft.dll` runs as dotnet.exe: never swap that. (`dotnet run` starts the UncleCraft.exe apphost, which is fine.)
+            var target = WindowsTarget();
+            if (Path.GetFileNameWithoutExtension(target).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+                throw new UpdateException($"running as {target}, not UncleCraft.exe", CantUpdateHere);
+            var dir = Path.GetDirectoryName(target);
+            if (dir == null || !Writable(dir)) throw new UpdateException($"{dir} isn't writable", CantUpdateHere);
+        }
+    }
+
     private static async Task ApplyWindows(ReleaseManifest m, string file, IUpdateHost? host)
     {
-        // The installed copy is updated even when this one runs from elsewhere (Downloads, dist); without one, this exe.
+        // The installed copy is updated even when this one runs from elsewhere (Downloads, dist, a source build's
+        // bin folder); without one, this exe is replaced where it is.
+        CheckCanApply();
         var target = WindowsTarget();
         var old = target + ".old";
         var staged = target + ".new";
@@ -314,7 +347,7 @@ public static class Updater
     {
         var bundle = MacBundle() ?? throw new UpdateException("not running from an .app bundle", CantUpdateHere);
         var parent = Path.GetDirectoryName(bundle)!;
-        if (!Writable(parent)) throw new UpdateException($"{parent} isn't writable", CantUpdateHere);
+        if (!Writable(parent)) throw new UpdateException($"{parent} isn't writable", CantUpdateHere); // any folder: /Applications, ~/Applications, mac/out
         var staging = bundle + ".new";
         var old = bundle + ".old";
         DeleteDir(staging); DeleteDir(old);

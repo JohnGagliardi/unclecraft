@@ -184,8 +184,8 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
             _notice = st.State switch
             {
                 "failed" => "Couldn't check for updates.",
-                // a plain label, not a button: dev builds (and --no-update) never update themselves
-                "available-dev" => $"Dev build, updates off (v{st.Release!.Version} is on GitHub Releases).",
+                // a plain label, not a button: --no-update / UNCLECRAFT_NO_UPDATE=1 (builds from source update like the rest)
+                "available-optout" => $"Updates are off on this copy (v{st.Release!.Version} is on GitHub).",
                 _ => null,
             };
         Event("update", UpdateJson(st));
@@ -230,7 +230,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
         finally { _playCts = null; }
     }
 
-    /// <summary>Bridge "applyUpdate": installs an available update now (also on dev builds, which Play never forces).</summary>
+    /// <summary>Bridge "applyUpdate": installs an available update now (also on an opted-out copy, which Play never forces).</summary>
     private async Task<JsonNode> ApplyUpdate()
     {
         if (_busy) throw new UiError("error", "Already starting a game.");
@@ -238,7 +238,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
         try
         {
             var st = await CheckUpdate(false);
-            if (st.State is "available" or "available-dev") await InstallUpdate(st.Release!);
+            if (st.State is "available" or "available-optout") await InstallUpdate(st.Release!);
             return UpdateJson(Updater.Last ?? st);
         }
         finally { _busy = false; }

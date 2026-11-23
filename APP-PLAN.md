@@ -174,3 +174,7 @@ the host PC.
 
 - 2026-11-21: plan file set up. No code changes.
 - 2026-11-21: code review written (section above). No code changes.
+- 2026-11-23: builds from source update like releases (same check, forced before Play, trial and rollback). A
+  `-dev` build also takes a release with the same number. Opt out with `--no-update` or `UNCLECRAFT_NO_UPDATE=1`
+  (state `available-optout`, label "Updates are off on this copy"). The updater refuses to swap `dotnet.exe` or an
+  unwritable folder before downloading. Tested in a scratch harness on Windows; Mac not run.
