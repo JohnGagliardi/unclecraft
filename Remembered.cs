@@ -16,6 +16,8 @@ public sealed class RememberedLogin
     public string ProtectedToken { get; set; } = "";
     public DateTime SavedAt { get; set; }
     public DateTime? LastPlayed { get; set; }
+    /// <summary>The host lets this person use the test server (from the last login answer); null = not known yet.</summary>
+    public bool? TestServer { get; set; }
 }
 
 public static class RememberedStore
@@ -46,7 +48,18 @@ public static class RememberedStore
         var old = list.Where(r => r.Host == host && r.Person.Equals(person, StringComparison.OrdinalIgnoreCase)).ToList();
         foreach (var r in old) SecretStore.Delete(r.ProtectedToken);
         list.RemoveAll(old.Contains);
-        list.Add(new RememberedLogin { Host = host, Person = person, DeviceId = deviceId, ProtectedToken = stored, SavedAt = DateTime.Now, LastPlayed = old.FirstOrDefault()?.LastPlayed });
+        list.Add(new RememberedLogin { Host = host, Person = person, DeviceId = deviceId, ProtectedToken = stored, SavedAt = DateTime.Now,
+            LastPlayed = old.FirstOrDefault()?.LastPlayed, TestServer = old.FirstOrDefault()?.TestServer });
+        Save(list);
+    }
+
+    /// <summary>Records whether the last login answer carried "testServer" (saves only when it changed).</summary>
+    public static void SetTestServer(string host, string person, bool allowed)
+    {
+        var list = All();
+        var hits = list.Where(r => r.Host == host && r.Person.Equals(person, StringComparison.OrdinalIgnoreCase) && r.TestServer != allowed).ToList();
+        if (hits.Count == 0) return;
+        foreach (var r in hits) r.TestServer = allowed;
         Save(list);
     }
 

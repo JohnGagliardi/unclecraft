@@ -26,7 +26,15 @@ public static class Logins
 {
     public const string InvitedPlaceholder = "Invited player";
 
+    /// <summary>Logs in (never a guest) and remembers on the saved card whether the host allows this person the test server.</summary>
     public static async Task<Lease> LoginAs(BrokerClient broker, PlayerChoice c, string hostKey)
+    {
+        var lease = await LoginOnly(broker, c, hostKey);
+        if (lease.GuestOf == null) RememberedStore.SetTestServer(hostKey, lease.Person, lease.TestServer != null);
+        return lease;
+    }
+
+    private static async Task<Lease> LoginOnly(BrokerClient broker, PlayerChoice c, string hostKey)
     {
         switch (c)
         {

@@ -29,6 +29,7 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
     private readonly Dictionary<string, Label> _rows = new(StringComparer.OrdinalIgnoreCase); // person -> error label
     private readonly Dictionary<int, TaskCompletionSource<JsonNode?>> _pending = [];
     private List<string> _people = [];
+    private HashSet<string> _testPeople = new(StringComparer.OrdinalIgnoreCase); // saved people the host allows on the test server
     private readonly List<(JsonObject choice, string name)> _picked = []; // split-screen: picks wait for the last one
     private int _nextId;
     private int _players; // in the current launch
@@ -195,6 +196,7 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
                     case "update": Status($"Updating UncleCraft to v{Str(m, "version")}..."); break;
                     case "update-apply": _cancel.Enabled = false; Status("Updating UncleCraft: starting the new version..."); break;
                     case "login": Status($"Logging in {Str(m, "person")}..."); break;
+                    case "test": Status("Starting the test server... This takes 30-60 seconds."); break;
                     case "starting": _cancel.Enabled = false; Status("Starting Minecraft..."); break;
                     case "booting":
                         Status(_players > 1 ? $"The {_players} games are starting; they will be arranged on this screen." : "Minecraft is starting and will join the server.");
@@ -232,6 +234,8 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
     private void SetSaved(JsonNode? saved)
     {
         _people = saved?.AsArray().Select(n => n?["person"]?.GetValue<string>() ?? "").Where(p => p.Length > 0).ToList() ?? [];
+        _testPeople = new(saved?.AsArray().Where(n => n?["testServer"]?.GetValue<bool?>() == true)
+            .Select(n => n!["person"]?.GetValue<string>() ?? "") ?? [], StringComparer.OrdinalIgnoreCase);
         RenderSaved();
     }
 
@@ -254,6 +258,17 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
             forget.LinkClicked += async (_, _) => await Forget(person);
             var error = new Label { AutoSize = true, ForeColor = Color.Firebrick, Margin = new Padding(8, 9, 0, 0), MaximumSize = new Size(260, 0) };
             row.Controls.Add(play);
+            if (!Split && _testPeople.Contains(person)) // the host's test server: one player only, never the live world
+            {
+                var test = new Button { Text = "Test server", AutoSize = true, MinimumSize = new Size(0, 34), BackColor = Color.FromArgb(241, 91, 181), ForeColor = Color.White };
+                test.Click += async (_, _) =>
+                {
+                    if (_busy) return;
+                    foreach (var err in _rows.Values) err.Text = "";
+                    await Play([new JsonObject { ["kind"] = "saved", ["person"] = person }], "test");
+                };
+                row.Controls.Add(test);
+            }
             row.Controls.Add(forget);
             row.Controls.Add(error);
             _saved.Controls.Add(row);
@@ -323,7 +338,7 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
         _bar.Value = Math.Min(done, _bar.Maximum);
     }
 
-    private async Task Play(List<JsonObject> chosen)
+    private async Task Play(List<JsonObject> chosen, string? target = null)
     {
         _busy = true;
         SetEnabled(false);
@@ -340,7 +355,9 @@ public sealed class MainForm : Form, IGameWindows, IUpdateHost
             var players = new JsonArray([.. chosen]);
             _players = players.Count;
             _cancel.Enabled = true; // until the "starting" phase
-            await Call("play", new JsonObject { ["players"] = players });
+            var req = new JsonObject { ["players"] = players };
+            if (target != null) { req["target"] = target; Status("TEST SERVER: getting ready..."); }
+            await Call("play", req);
         }
         catch (UiError e)
         {

@@ -63,6 +63,13 @@ without the IP.
   repeated `POST /sessions/guest` (`_P2`-`_P4`); `no_free_account` part-way releases all and says "try fewer".
   games/p2-p4 get Controllable `autoSelect = false` (no controller-index option exists). Not run against the test
   broker yet. Demos `?demo=split3`, `split3full`, `split4`, `split4full`, `guest4`, `launch3`, `launch4`, `full4`.
+- **Test server button (2026-11-26): built, not tried against a broker.** For people whose `/sessions` answer has
+  `testServer` (`Lease.TestServer`; saved per person as `RememberedLogin.TestServer`, null = unknown). A magenta
+  "TEST SERVER" button on that saved card (1-player mode only; classic window: "Test server" next to Play) sends
+  `play` with `target:"test"`: login, `POST /test-server/start`, poll `GET /test-server` every 3 s while
+  `starting` (3 min limit, Cancel works), no `WaitForServer`, tunnel hello with `"target":"test"` (always tunnelled,
+  also on the host's own PC), no voice relay. Errors: `test_*`, `low_memory`, `too_many_test_servers`, `busy`,
+  `test_single`. Demos `?demo=testcard`, `teststart`, `testerror`.
 
 ## Next
 

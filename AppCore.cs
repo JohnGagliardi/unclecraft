@@ -152,7 +152,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
         var arr = new JsonArray();
         if (key == null) return arr;
         foreach (var r in RememberedStore.ForHost(key))
-            arr.Add(new JsonObject { ["person"] = r.Person, ["lastPlayed"] = r.LastPlayed?.ToUniversalTime().ToString("o") });
+            arr.Add(new JsonObject { ["person"] = r.Person, ["lastPlayed"] = r.LastPlayed?.ToUniversalTime().ToString("o"), ["testServer"] = r.TestServer });
         return arr;
     }
 
@@ -382,6 +382,31 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
         }
     }
 
+    /// <summary>
+    /// Starts the host's test server for this lease, or finds it up. Paper takes 30-60 s: polls every 3 s while it says
+    /// "starting" (Cancel stops the wait), and gives up after 3 minutes. 503 low_memory / too_many_test_servers and 403
+    /// test_not_allowed come back from the broker as BrokerException codes.
+    /// </summary>
+    private async Task StartTestServer(BrokerClient broker, Lease lease, CancellationToken ct)
+    {
+        Event("phase", new JsonObject { ["phase"] = "test", ["person"] = lease.Person });
+        Log.Info($"test server: start requested for {lease.Person} (was {lease.TestServer?.State})");
+        var st = await broker.TestServerStart(lease, ct);
+        var deadline = DateTime.Now.AddMinutes(3);
+        var since = DateTime.Now;
+        while (st.State == "starting")
+        {
+            if (DateTime.Now > deadline)
+                throw new UiError("test_down", "The test server didn't start in 3 minutes. Try again, or ask the host.", lease.Person);
+            Event("status", new JsonObject { ["text"] = $"Starting the test server… ({(int)(DateTime.Now - since).TotalSeconds} s, usually 30-60 s)" });
+            await Task.Delay(3000, ct);
+            st = await broker.TestServerStatus(lease, ct);
+        }
+        if (st.State != "up")
+            throw new UiError("test_down", "The test server stopped while starting. Try again, or ask the host.", lease.Person);
+        Log.Info($"test server is up for {lease.Person} ({(int)(DateTime.Now - since).TotalSeconds} s)");
+    }
+
     private JsonNode? SetSound(JsonObject m) { _s.SoundOn = m["on"]?.GetValue<bool>() ?? true; _s.Save(); return null; }
     /// <summary>{players: 1-4}; an older page sends {split: bool}.</summary>
     private JsonNode? SetMode(JsonObject m)
@@ -449,9 +474,15 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
         finally { _busy = false; }
         var broker = Broker();
         var hostKey = HostKey()!;
+        // target "test": the host's separate test server (only for people the host allows), one player, no voice
+        var target = m["target"]?.GetValue<string>();
+        if (target is not (null or "test")) throw new UiError("error", $"Unknown server {target}.");
+        var test = target == "test";
         var choices = m["players"]!.AsArray().Select(n => ParseChoice(n!, hostKey)).ToList();
         if (choices.Count == 0 || choices[0] is GuestChoice)
             throw new UiError("error", "Pick player 1 first; a guest plays next to them.");
+        if (test && choices.Count > 1)
+            throw new UiError("test_single", "The test server is for one player at a time. Switch to 1 player and try again.");
         if (choices.Count > Settings.MaxPlayers)
             throw new UiError("error", $"Up to {Settings.MaxPlayers} players fit on one PC.");
         var people = choices.Where(c => c is not GuestChoice).Select(c => c.Name).ToList();
@@ -466,7 +497,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
         _playCts = cts;
         var leases = new List<Lease>();
         PlayerChoice? current = null;
-        Log.Info($"play: {choices.Count} player(s)");
+        Log.Info(test ? "play: 1 player on the TEST SERVER" : $"play: {choices.Count} player(s)");
         try
         {
             var game = await new GameInstaller(broker,
@@ -489,8 +520,18 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
             }
             Event("saved", new JsonObject { ["saved"] = SavedJson() });
 
-            // the host's server sleeps when nobody plays; logging in woke it, so wait until it's ready
-            await WaitForServer(broker, text => Event("status", new JsonObject { ["text"] = text }), cts.Token);
+            if (test)
+            {
+                // the live server's sleep state doesn't matter here: start (or find) the test server instead
+                if (leases[0].TestServer == null)
+                    throw new UiError("test_not_allowed", "This account can't use the test server.", choices[0].Name);
+                await StartTestServer(broker, leases[0], cts.Token);
+            }
+            else
+            {
+                // the host's server sleeps when nobody plays; logging in woke it, so wait until it's ready
+                await WaitForServer(broker, text => Event("status", new JsonObject { ["text"] = text }), cts.Token);
+            }
             cts.Token.ThrowIfCancellationRequested(); // last point Back can stop it: after this games start
             _playCts = null;
 
@@ -502,7 +543,8 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
                 var lease = started[i];
                 current = choices[i];
                 // The game connection: through the encrypted tunnel when the host offers it, else straight to Paper.
-                var (address, conn) = await GameConnection.Open(broker, hostKey, lease, lease.ServerHost ?? Address().host);
+                // test: always the tunnel with target "test", and no voice relay (the test server has no voice chat)
+                var (address, conn) = await GameConnection.Open(broker, hostKey, lease, lease.ServerHost ?? Address().host, target);
                 GameProcess gp;
                 int slot;
                 lock (_slots) { slot = 1; while (_slots.Contains(slot)) slot++; _slots.Add(slot); } // lowest free games/pN

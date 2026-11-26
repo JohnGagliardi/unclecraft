@@ -15,7 +15,10 @@ public sealed class BrokerException(string message, string? code = null, JsonNod
 
 public sealed record Lease(string LeaseToken, string Person, string AccountName, string? ServerHost, int ServerPort, bool ServerSignin,
     string? DeviceToken = null, string? DeviceId = null, TunnelInfo? Tunnel = null,
-    string? GuestOf = null);
+    string? GuestOf = null, TestServerInfo? TestServer = null);
+/// <summary>The lease's "testServer": present only for people the host allows on the test server (never guests).
+/// State "up" | "starting" | "down"; Reason "low_memory" | "too_many_test_servers" when CanStart is false.</summary>
+public sealed record TestServerInfo(string State, bool CanStart, string? Reason);
 public sealed record McToken(string Username, string Uuid, string AccessToken);
 public sealed record ModInfo(string File, long Size, string Sha256);
 public sealed record ClientManifest(string MinecraftVersion, string FabricLoaderVersion, List<ModInfo> Mods, bool TestMode);
@@ -200,7 +203,21 @@ public sealed class BrokerClient : IDisposable
         j["deviceId"]?.GetValue<string>(),
         j["tunnel"]?["alpn"]?.GetValue<string>() is { Length: > 0 } alpn
             ? new TunnelInfo(alpn, j["tunnel"]?["voicePort"]?.GetValue<int>() ?? 24454) : null,
-        j["guestOf"]?.GetValue<string>());
+        j["guestOf"]?.GetValue<string>(),
+        ToTestServer(j["testServer"]));
+
+    private static TestServerInfo? ToTestServer(JsonNode? t) => t is JsonObject o
+        ? new(o["state"]?.GetValue<string>() ?? "down", o["canStart"]?.GetValue<bool>() ?? true /* the start answer omits it */, o["reason"]?.GetValue<string>())
+        : null;
+
+    /// <summary>GET /test-server: the test server's state for this lease (403 test_not_allowed for everyone else).</summary>
+    public async Task<TestServerInfo> TestServerStatus(Lease lease, CancellationToken ct = default) =>
+        ToTestServer(await Send(HttpMethod.Get, "/api/v1/test-server", bearer: lease.LeaseToken, ct: ct)) ?? new("down", false, null);
+
+    /// <summary>POST /test-server/start: 200 {state:"up"} or 202 {state:"starting"} (poll TestServerStatus). 503 low_memory /
+    /// too_many_test_servers and 403 test_not_allowed come back as BrokerException codes with the broker's message.</summary>
+    public async Task<TestServerInfo> TestServerStart(Lease lease, CancellationToken ct = default) =>
+        ToTestServer(await Send(HttpMethod.Post, "/api/v1/test-server/start", new { }, lease.LeaseToken, ct)) ?? new("down", false, null);
 
     /// <summary>A split-screen guest seat for player 1 (needs player 1's lease). The answer is a normal lease, never with a device token.</summary>
     public async Task<Lease> GuestSession(Lease player1, CancellationToken ct = default) =>

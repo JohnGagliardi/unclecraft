@@ -116,3 +116,6 @@ changes, opt out with `--no-update` or the environment variable `UNCLECRAFT_NO_U
 updates are off on this copy. (A build given a higher version by hand with `-p:Version` counts as newer and isn't
 updated.) Every push to `main` (except docs-only changes)
 becomes a signed release that everyone updates to, so changes go through a reviewed pull request.
+
+Host note: a saved card shows a "TEST SERVER" button only for a person the host's broker allows on its test server;
+everyone else never sees it.

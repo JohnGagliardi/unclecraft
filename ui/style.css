@@ -163,6 +163,14 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--lime); }
 .login-tabs button[aria-selected="true"] { background: var(--sky); color: var(--ink); box-shadow: var(--bevel); }
 .invite-input { font-family: Consolas, monospace; font-size: 20px !important; letter-spacing: .12em; text-align: center; text-transform: uppercase; }
 .card.guest { background: #2a3d5e; box-shadow: var(--bevel), inset 0 0 0 3px var(--sky); }
+/* the host's TEST server: magenta stripes everywhere, so it is never mistaken for the live server */
+.card .test-btn { width: 100%; text-align: center; font-weight: 900; font-size: 11px; letter-spacing: .08em; color: white; padding: 4px 6px; cursor: pointer; clip-path: var(--cut);
+  background: repeating-linear-gradient(-45deg, var(--pink) 0 8px, #c2378f 8px 16px); box-shadow: var(--bevel); text-shadow: 0 1px 0 rgba(0,0,0,.35); }
+.card .test-btn:hover { filter: brightness(1.15); }
+.test-tag { justify-self: center; font-weight: 900; font-size: 12px; letter-spacing: .1em; color: white; padding: 4px 12px; clip-path: var(--cut);
+  background: repeating-linear-gradient(-45deg, var(--pink) 0 10px, #c2378f 10px 20px); text-shadow: 0 1px 0 rgba(0,0,0,.35); }
+.test-tag[hidden] { display: none; }
+#launch.test .launch-card { box-shadow: var(--bevel), inset 0 0 0 3px var(--pink); }
 .card.guest .tag { position: absolute; top: 10px; left: 10px; background: var(--sky); color: var(--ink); font-weight: 900; font-size: 11px; padding: 2px 7px; clip-path: var(--cut); }
 .wizard { width: min(560px, 92vw); padding: 26px 30px 24px; }
 .wizard p { margin: 0; }

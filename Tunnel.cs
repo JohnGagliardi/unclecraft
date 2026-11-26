@@ -20,14 +20,20 @@ public sealed record TunnelInfo(string Alpn, int VoicePort);
 /// </summary>
 public static class GameConnection
 {
-    public static async Task<(string address, IDisposable? stop)> Open(BrokerClient broker, string pinHex, Lease lease, string directHost)
+    /// <summary>target "test": the host's test server. It only exists behind the tunnel (also when the host is this PC),
+    /// and it has no voice chat, so no voice relay is started.</summary>
+    public static async Task<(string address, IDisposable? stop)> Open(BrokerClient broker, string pinHex, Lease lease, string directHost, string? target = null)
     {
-        if (lease.Tunnel == null || IsThisPc(broker.Host))
+        var test = target == "test";
+        if (test && lease.Tunnel == null)
+            throw new BrokerException("The host's server is too old for the test server (no encrypted game connection). Ask the host to update it.", "no_tunnel");
+        if (!test && (lease.Tunnel == null || IsThisPc(broker.Host)))
             return (BrokerClient.HostPort(directHost, lease.ServerPort), null);
-        var tunnel = new GameTunnel(broker.Host, broker.Port, pinHex, lease.LeaseToken, lease.Tunnel.Alpn, lease.Person);
+        var tunnel = new GameTunnel(broker.Host, broker.Port, pinHex, lease.LeaseToken, lease.Tunnel!.Alpn, lease.Person, target);
         try
         {
             await tunnel.Start();
+            if (test) { Log.Info($"test server for {lease.Person}: no voice relay"); return ($"127.0.0.1:{tunnel.LocalPort}", new Both(tunnel, null)); }
             var voice = VoiceRelay.Acquire(broker.Host, lease.Tunnel.VoicePort);
             return ($"127.0.0.1:{tunnel.LocalPort}", new Both(tunnel, voice));
         }
@@ -56,7 +62,7 @@ public static class GameConnection
 }
 
 /// <summary>One game's local listener: 127.0.0.1:&lt;free port&gt; -> TLS (pinned) -> broker -> Paper.</summary>
-public sealed class GameTunnel(string host, int port, string pinHex, string leaseToken, string alpn, string person) : IDisposable
+public sealed class GameTunnel(string host, int port, string pinHex, string leaseToken, string alpn, string person, string? target = null) : IDisposable
 {
     private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
     private readonly CancellationTokenSource _cts = new();
@@ -69,7 +75,7 @@ public sealed class GameTunnel(string host, int port, string pinHex, string leas
         await using (var probe = await Connect(_cts.Token)) { } // clear error now instead of "Connection lost" in game
         _listener.Start();
         LocalPort = ((IPEndPoint)_listener.LocalEndpoint).Port;
-        Log.Info($"tunnel for {person}: 127.0.0.1:{LocalPort} -> {BrokerClient.HostPort(host, port)} (TLS, pinned)");
+        Log.Info($"tunnel for {person}: 127.0.0.1:{LocalPort} -> {BrokerClient.HostPort(host, port)} (TLS, pinned){(target != null ? $", target {target} server" : "")}");
         _ = AcceptLoop();
     }
 
@@ -140,13 +146,17 @@ public sealed class GameTunnel(string host, int port, string pinHex, string leas
             if (ssl.NegotiatedApplicationProtocol.ToString() != alpn)
                 throw new BrokerException("The host's server is too old for the encrypted game connection. Ask the host to update it.", "no_tunnel");
 
-            var hello = new JsonObject { ["v"] = 1, ["lease"] = leaseToken }.ToJsonString() + "\n";
-            await ssl.WriteAsync(Encoding.UTF8.GetBytes(hello), t.Token);
+            var hello = new JsonObject { ["v"] = 1, ["lease"] = leaseToken };
+            if (target != null) hello["target"] = target; // only for the test server: the live hello is unchanged
+            await ssl.WriteAsync(Encoding.UTF8.GetBytes(hello.ToJsonString() + "\n"), t.Token);
             await ssl.FlushAsync(t.Token);
             var answer = await ReadLine(ssl, t.Token);
             var j = JsonNode.Parse(answer);
             if (j?["ok"]?.GetValue<bool>() != true)
-                throw new BrokerException(j?["message"]?.GetValue<string>() ?? "The host refused the game connection.", j?["error"]?.GetValue<string>() ?? "tunnel_refused");
+            {
+                var code = j?["error"]?.GetValue<string>() ?? "tunnel_refused";
+                throw new BrokerException(j?["message"]?.GetValue<string>() ?? RefusedText(code), code);
+            }
             return ssl;
         }
         catch (Exception e) when (!ct.IsCancellationRequested && (e is OperationCanceledException || (t.IsCancellationRequested && e is IOException)))
@@ -162,6 +172,17 @@ public sealed class GameTunnel(string host, int port, string pinHex, string leas
             throw;
         }
     }
+
+    /// <summary>Wording for a refusal that came without the broker's own message (the code is kept as the error code).</summary>
+    private static string RefusedText(string code) => code switch
+    {
+        "test_not_allowed" => "This account can't use the test server.",
+        "test_off" => "The test server is switched off on the host.",
+        "test_starting" => "The test server is still starting. Try again in a minute.",
+        "test_down" => "The test server isn't running.",
+        "busy" => "The test server is busy right now.",
+        _ => "The host refused the game connection.",
+    };
 
     /// <summary>Reads one '\n'-terminated line byte by byte, so no Minecraft bytes after it are swallowed.</summary>
     private static async Task<string> ReadLine(Stream s, CancellationToken ct)

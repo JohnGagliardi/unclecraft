@@ -60,6 +60,15 @@ const ERRORS = {
   // split-screen guests (the broker's message is shown above the hint)
   guest_in_use: ['GUESTS ALREADY PLAYING', 'Player 1 already has all their guests playing (up to 3). Close a guest\'s game first, or pick a saved player for that screen.'],
   guest_cannot_bring_guest: ["A GUEST CAN'T BRING A GUEST", 'Only player 1 can add a guest.'],
+  // the host's test server (one allowed account; the broker's message is shown above the hint)
+  test_not_allowed: ["NO TEST SERVER FOR YOU", "This account can't use the test server. Press a card's normal PLAY for the live server."],
+  test_off: ['TEST SERVER IS OFF', 'The host has switched the test server off.'],
+  test_starting: ['TEST SERVER STILL STARTING', 'It takes 30-60 seconds. Try again in a minute.'],
+  test_down: ["TEST SERVER CAN'T START", 'Try again in a minute, or ask the host.'],
+  test_single: ['ONE PLAYER ONLY', 'The test server is for one player at a time. Switch to 1 player.'],
+  low_memory: ['NOT ENOUGH MEMORY ON THE HOST', "The host's PC has too little free memory to start the test server right now."],
+  too_many_test_servers: ['TOO MANY TEST SERVERS', 'Another test server is already running on the host. Try again later.'],
+  busy: ['TEST SERVER IS BUSY', 'Someone is already on the test server. Try again later.'],
 };
 function friendly(err) {
   const [title, hint] = ERRORS[err?.code] || ['SOMETHING WENT WRONG', 'Try again. If it keeps happening, tell the host.'];
@@ -159,6 +168,14 @@ function renderCards() {
     forget.onclick = (e) => { e.stopPropagation(); confirmForget(p.person); };
     forget.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); confirmForget(p.person); } };
     card.append(forget);
+    // the host's test server: only for a person the host allows (known from their last login), one player only
+    if (p.testServer === true && S.mode === 1) {
+      const test = el('span', { className: 'test-btn', textContent: 'TEST SERVER', title: `Play ${p.person} on the host's TEST server (not the live world)`, role: 'button', tabIndex: 0 });
+      test.dataset.nav = '';
+      test.onclick = (e) => { e.stopPropagation(); playTest(p.person); };
+      test.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); playTest(p.person); } };
+      card.append(test);
+    }
     card.onmouseenter = () => Sound.hover();
     card.onclick = () => choose({ kind: 'saved', person: p.person });
     box.append(card);
@@ -410,9 +427,10 @@ $('#wzDone').onclick = () => { Sound.click(); $('#setup').classList.remove('open
 const STAGES = [['check', 'CHECK'], ['Java', 'JAVA'], ['Minecraft', 'GAME'], ['Fabric', 'FABRIC'], ['Mods', 'MODS'], ['login', 'SIGN IN'], ['start', 'START']];
 let speed = { t: 0, b: 0, rate: 0, stage: '' };
 let hopperAnim = null;
-function openLaunch(players) {
-  S.players = players.map((p) => p.person);
-  const o = $('#launch'); o.classList.add('open');
+function openLaunch(players, test = false) {
+  S.players = players.map((p) => p.person); S.test = test;
+  const o = $('#launch'); o.classList.add('open'); o.classList.toggle('test', test);
+  $('#launchTestTag').hidden = !test;
   if (!openLaunch.sky) openLaunch.sky = startLandscape($('#launch .overlay-sky'), { px: 5, speed: 1.4 });
   $('#launchError').hidden = true;
   $('#launchCancel').hidden = false;
@@ -420,11 +438,11 @@ function openLaunch(players) {
   setTitle(readyTitle());
   $('#launchSub').textContent = players.length > 1
     ? players.map((p, i) => `${p.person} ${screenName(i, players.length).toLowerCase()}`).join(' · ')
-    : `Playing as ${players[0].person}`;
+    : test ? `Test server: playing as ${players[0].person}` : `Playing as ${players[0].person}`;
   setStage('check'); setBar(null, '');
   hopperAnim?.stop(); hopperAnim = startHopper($('#hopper'), S.players);
 }
-function readyTitle() { const n = S.players.length; return n > 2 ? `GET READY, ALL ${n}!` : n > 1 ? 'GET READY, BOTH!' : 'GETTING READY'; }
+function readyTitle() { const n = S.players.length; return S.test ? 'TEST SERVER' : n > 2 ? `GET READY, ALL ${n}!` : n > 1 ? 'GET READY, BOTH!' : 'GETTING READY'; }
 function setTitle(t, color = '#ffffff') { $('#launchTitle').replaceChildren(pixelText(t, { scale: 5, color, shadow: '#0b1226' })); }
 function setStage(k, state = 'active') {
   let passed = true;
@@ -535,13 +553,19 @@ function startHopper(canvas, names) {
 }
 
 /* ================= play ================= */
-async function play(players) {
+/** A saved person on the host's test server: always one player, no voice chat (AppCore skips the voice relay). */
+function playTest(person) {
+  if (S.busy) return;
+  S.saved.forEach((p) => { p.error = null; });
+  Sound.click(); play([{ kind: 'saved', person }], 'test');
+}
+async function play(players, target = null) {
   if (S.busy) return;
   S.busy = true; renderCards();
   Sound.launch();
-  openLaunch(players);
+  openLaunch(players, target === 'test');
   try {
-    await call('play', { players });
+    await call('play', target ? { players, target } : { players });
   } catch (err) {
     if (err?.code === 'cancelled') { closeLaunch(); toast(err.message); return; }
     const person = err.person;
@@ -564,6 +588,7 @@ onEvent((m) => {
       if (m.phase === 'update') { setTitle('UPDATING!'); $('#launchSub').textContent = `Updating UncleCraft… (v${m.version})`; setBar(null, 'Downloading the update…'); }
       if (m.phase === 'update-apply') { $('#launchCancel').hidden = true; setBar(null, 'Starting the new version. This window closes in a moment…'); }
       if (m.phase === 'login') { setStage('login'); setBar(null, `Signing in ${m.person}…`); }
+      if (m.phase === 'test') { setStage('start'); $('#launchSub').textContent = 'Starting the test server…'; setBar(null, 'Starting the test server… This takes 30-60 seconds.'); }
       if (m.phase === 'starting') { $('#launchCancel').hidden = true; setStage('start'); setTitle('STARTING!'); setBar(null, 'Starting Java…'); }
       if (m.phase === 'booting') { setStage('start'); setTitle('BOOTING MINECRAFT'); hopperAnim?.boot(); setBar(null, 'The game window will open in a moment…'); }
       if (m.phase === 'ingame') {
@@ -587,7 +612,9 @@ const Demo = {
     { person: 'Maya', lastPlayed: new Date(Date.now() - 4 * 86400e3).toISOString() },
   ],
   async call(type) {
-    if (type === 'init') return { versionText: 'v0.2.6', configured: demo !== 'setup', settings: { server: '192.168.1.20', fingerprint: '12:34:56', soundOn: true, playerCount: demo === 'split' ? 2 : 1, players: [] }, saved: this.saved,
+    // ?demo=testcard / teststart / testerror: Test1 is allowed on the host's test server
+    const saved = demo?.startsWith('test') && demo !== 'test' ? this.saved.map((p) => ({ ...p, testServer: p.person === 'Test1' })) : this.saved;
+    if (type === 'init') return { versionText: 'v0.2.6', configured: demo !== 'setup', settings: { server: '192.168.1.20', fingerprint: '12:34:56', soundOn: true, playerCount: demo === 'split' ? 2 : 1, players: [] }, saved,
       update: { state: demo === 'update' ? 'failed' : 'none', current: '0.2.3', notice: demo === 'update' ? "Couldn't check for updates." : null } };
     if (type === 'status') return { ok: true, testMode: demo === 'test', mode: demo === 'test' ? 'test' : demo === 'interim' ? 'interim' : 'approved', accounts: { total: 6, free: 4 }, features: ['guests'], playing: [{ person: 'Ben', account: 'PoolAccount3', state: 'online', platform: 'java', world: 'Skyreach' }, { person: 'Mia', account: '', state: 'online', platform: 'console', world: 'Skyreach' }, { person: 'Uncle', account: 'PoolAccount1', state: 'reserved' }] };
     return {};
@@ -644,6 +671,8 @@ async function boot() {
   if (demo === 'login') { openLogin(); }
   if (demo === 'guest') demoSlots(2, [saved('Alice'), null]);
   if (demo === 'guest2') demoSlots(2, [saved('Alice'), { ...guest }]);
+  if (demo === 'teststart') { openLaunch([{ person: 'Test1' }], true); setStage('start'); $('#launchSub').textContent = 'Starting the test server… (21 s, usually 30-60 s)'; setBar(null, 'Starting the test server… This takes 30-60 seconds.'); }
+  if (demo === 'testerror') { openLaunch([{ person: 'Test1' }], true); setStage('start'); launchError({ code: 'low_memory', message: 'Only 1.2 GB free on the host; the test server needs 3 GB.' }); }
   if (demo === 'invite') { openLogin('', '', 'invite'); $('#inviteCode').value = '7k2mq9xd4hrt8wza'; $('#inviteCode').oninput(); }
 }
 boot();
