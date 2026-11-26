@@ -360,7 +360,9 @@ function renderServer() {
   $('#srvHint').textContent = '';
   const ul = $('#playing'); ul.replaceChildren();
   const playing = st.playing || [];
-  if (!playing.length) ul.append(el('li', { className: 'none', textContent: 'Nobody yet. Be the first!' }));
+  // away from home without a saved login the host sends only a count (no names)
+  const count = !playing.length && st.playingCount > 0 ? st.playingCount : 0;
+  if (!playing.length) ul.append(el('li', { className: 'none', textContent: count ? `${count} playing` : 'Nobody yet. Be the first!' }));
   for (const p of playing) {
     const console_ = p.platform === 'console'; // old brokers send no platform: they only listed launcher (PC) players
     const sub = [p.account ? `as ${p.account}` : '', p.world ? `in ${p.world}` : ''].filter(Boolean).join(' · ');
@@ -616,6 +618,8 @@ const Demo = {
     const saved = demo?.startsWith('test') && demo !== 'test' ? this.saved.map((p) => ({ ...p, testServer: p.person === 'Test1' })) : this.saved;
     if (type === 'init') return { versionText: 'v0.2.6', configured: demo !== 'setup', settings: { server: '192.168.1.20', fingerprint: '12:34:56', soundOn: true, playerCount: demo === 'split' ? 2 : 1, players: [] }, saved,
       update: { state: demo === 'update' ? 'failed' : 'none', current: '0.2.3', notice: demo === 'update' ? "Couldn't check for updates." : null } };
+    // ?demo=away: away from home with no saved login: the host sends only a count
+    if (type === 'status' && demo === 'away') return { ok: true, testMode: false, mode: 'approved', accounts: { total: 6, free: 2 }, features: ['guests'], playing: [], playingCount: 4 };
     if (type === 'status') return { ok: true, testMode: demo === 'test', mode: demo === 'test' ? 'test' : demo === 'interim' ? 'interim' : 'approved', accounts: { total: 6, free: 4 }, features: ['guests'], playing: [{ person: 'Ben', account: 'PoolAccount3', state: 'online', platform: 'java', world: 'Skyreach' }, { person: 'Mia', account: '', state: 'online', platform: 'console', world: 'Skyreach' }, { person: 'Uncle', account: 'PoolAccount1', state: 'reserved' }] };
     return {};
   },

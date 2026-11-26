@@ -184,3 +184,4 @@ the host PC.
   unwritable folder before downloading. Tested in a scratch harness on Windows; Mac not run.
 - 2026-11-23: no more "-dev": a build from source takes the newest reachable v* tag as its version
   (Directory.Build.targets, git describe; 0.2.0 without git or tags; CI's -p:Version wins) and updates like a release.
+- 2026-11-26: "Playing now" away from home: status polls send a Bearer (running game's player-1 lease, else the most recently played saved login's device token, decrypted once per host), so the broker lists names; with only `playingCount` the page shows "<N> playing" (`?demo=away`).

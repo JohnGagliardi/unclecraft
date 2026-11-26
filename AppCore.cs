@@ -67,6 +67,12 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
     private bool _noticeSticky; // set by an update attempt: a later check doesn't clear it
     private bool _trialWatch;
     private HashSet<string> _features = []; // optional broker features from the last GET /status ("guests")
+    private readonly List<LiveLease> _live = []; // leases of running games (Watch owns them), for status calls
+    private DeviceBearer? _deviceBearer; // one saved device token, decrypted once per host + saved entry
+
+    private sealed record LiveLease(string BrokerId, int Slot, Lease Lease);
+    /// <summary>Cache key: the broker client id (host:port/fingerprint) and the saved entry's SecretStore reference.</summary>
+    private sealed record DeviceBearer(string BrokerId, string Stored, string? Token);
 
     /// <summary>Games still running (the host asks before closing).</summary>
     public int Running => _running;
@@ -303,7 +309,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         while (!cts.IsCancellationRequested)
         {
-            try { await Broker().GetStatus(cts.Token); break; }
+            try { var b = Broker(); await b.GetStatus(StatusBearer(), cts.Token); break; }
             catch (Exception)
             {
                 try { await Task.Delay(3000, cts.Token); } catch (OperationCanceledException) { /* 45 s are up */ }
@@ -336,9 +342,35 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
 
     private async Task<JsonNode> Status()
     {
-        var st = await Broker().GetStatus();
+        var broker = Broker();
+        var st = await broker.GetStatus(StatusBearer());
         _features = BrokerClient.Features(st);
         return st;
+    }
+
+    /// <summary>
+    /// What makes this PC "known" to the current host on a status call (away from home the host lists names only then):
+    /// a running game's lease (player 1's, not a guest's), else the most recently played saved login's device token.
+    /// The token is decrypted once (macOS: a Keychain read) and cached per host + saved entry, so another host, a
+    /// re-saved or forgotten login, or a changed address/fingerprint reads afresh. Unreadable: null (no header).
+    /// Call right after Broker(), which sets the current host id. Never logged.
+    /// </summary>
+    private string? StatusBearer()
+    {
+        var id = _brokerKey; var key = HostKey();
+        if (id == null || key == null) return null;
+        lock (_live)
+        {
+            var live = _live.Where(l => l.BrokerId == id).OrderBy(l => l.Lease.GuestOf != null).ThenBy(l => l.Slot).FirstOrDefault();
+            if (live != null) return live.Lease.LeaseToken;
+        }
+        var r = RememberedStore.ForHost(key).OrderByDescending(x => x.LastPlayed ?? x.SavedAt).FirstOrDefault();
+        if (r == null) { _deviceBearer = null; return null; }
+        if (_deviceBearer is { } c && c.BrokerId == id && c.Stored == r.ProtectedToken) return c.Token;
+        string? token = null;
+        try { token = RememberedStore.Token(r); } catch { /* unreadable: send nothing */ }
+        _deviceBearer = new DeviceBearer(id, r.ProtectedToken, string.IsNullOrEmpty(token) ? null : token);
+        return _deviceBearer.Token;
     }
 
     private JsonArray FeaturesJson() => new([.. _features.Order().Select(f => (JsonNode)f)]);
@@ -360,7 +392,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
         while (true)
         {
             JsonNode st;
-            try { st = await broker.GetStatus(ct); }
+            try { st = await broker.GetStatus(ct: ct); }
             catch (BrokerException) { return; }
             var paper = st["paper"]?.GetValue<string>();
             if (paper == "closed")
@@ -429,6 +461,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
                 string? token = null;
                 try { token = RememberedStore.Token(r); } catch { /* unreadable */ }
                 RememberedStore.Remove(key, r.Person);
+                if (_deviceBearer?.Stored == r.ProtectedToken) _deviceBearer = null;
                 if (token != null) { try { await Broker().ForgetDevice(token); } catch { /* host offline: token expires anyway */ } }
             }
         }
@@ -473,6 +506,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
         }
         finally { _busy = false; }
         var broker = Broker();
+        var brokerId = _brokerKey!;
         var hostKey = HostKey()!;
         // target "test": the host's separate test server (only for people the host allows), one player, no voice
         var target = m["target"]?.GetValue<string>();
@@ -560,7 +594,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
                 catch { conn?.Dispose(); lock (_slots) _slots.Remove(slot); throw; }
                 games.Add(gp);
                 if (lease.GuestOf == null) RememberedStore.Touch(hostKey, lease.Person);
-                _ = Watch(broker, lease, gp, conn);
+                _ = Watch(broker, brokerId, lease, gp, conn);
                 leases.Remove(lease); // owned by Watch() now
                 if (i < started.Count - 1) await Task.Delay(10_000); // stagger startup: one game boots at a time
             }
@@ -628,9 +662,11 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
     }
 
     /// <summary>Keeps the lease alive while the game runs, then gives the account back.</summary>
-    private async Task Watch(BrokerClient broker, Lease lease, GameProcess gp, IDisposable? conn)
+    private async Task Watch(BrokerClient broker, string brokerId, Lease lease, GameProcess gp, IDisposable? conn)
     {
         Interlocked.Increment(ref _running);
+        var live = new LiveLease(brokerId, gp.Slot, lease);
+        lock (_live) _live.Add(live);
         try
         {
             var proc = gp.Proc;
@@ -640,6 +676,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
                 if (!proc.HasExited) { try { await broker.Heartbeat(lease); } catch { /* server keeps the lease while the plugin sees us online */ } }
             }
             conn?.Dispose();
+            lock (_live) _live.Remove(live); // released next: status calls fall back to the saved login
             await broker.Release(lease);
             Log.Info($"{lease.Person}'s game closed; lease released");
             Event("closed", new JsonObject { ["person"] = lease.Person, ["account"] = lease.AccountName });
@@ -648,6 +685,7 @@ public sealed class AppCore(Action<string> post, IGameWindows windows, IUpdateHo
         finally
         {
             conn?.Dispose();
+            lock (_live) _live.Remove(live);
             lock (_slots) _slots.Remove(gp.Slot);
             Interlocked.Decrement(ref _running);
             DisposeRetired();

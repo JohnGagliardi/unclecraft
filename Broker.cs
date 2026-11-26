@@ -233,10 +233,12 @@ public sealed class BrokerClient : IDisposable
         return new McToken(j["username"]!.GetValue<string>(), j["uuid"]!.GetValue<string>(), j["accessToken"]!.GetValue<string>());
     }
 
-    /// <summary>Read-only lobby view: test mode, free accounts, who is playing. Older brokers: falls back to /health.</summary>
-    public async Task<JsonNode> GetStatus(CancellationToken ct = default)
+    /// <summary>Read-only lobby view: test mode, free accounts, who is playing. Older brokers: falls back to /health.
+    /// Names come only for the home network or a known PC: <paramref name="bearer"/> (a device or lease token for THIS
+    /// host) makes this PC known; without it an away caller gets playing [] and playingCount.</summary>
+    public async Task<JsonNode> GetStatus(string? bearer = null, CancellationToken ct = default)
     {
-        try { return await Send(HttpMethod.Get, "/api/v1/status", ct: ct); }
+        try { return await Send(HttpMethod.Get, "/api/v1/status", bearer: bearer, ct: ct); }
         catch (BrokerException e) when (e.Code == "not_found" || e.Code == "404")
         {
             await Send(HttpMethod.Get, "/api/v1/health", ct: ct);
